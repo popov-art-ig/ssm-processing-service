@@ -1,0 +1,24 @@
+# Локальное окружение для разработки/Фазы 1.
+# По умолчанию application.yml ожидает именно эти хосты/креды (localhost:5432, localhost:5672).
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: coordination
+      POSTGRES_USER: coordination
+      POSTGRES_PASSWORD: coordination
+    ports:
+      - "5432:5432"
+    volumes:
+      - coordination-postgres-data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+volumes:
+  coordination-postgres-data:

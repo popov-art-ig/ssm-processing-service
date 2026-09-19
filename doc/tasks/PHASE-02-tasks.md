@@ -66,10 +66,36 @@ production jar по построению `bootJar`, а не только по п
 `TransitionEngine.transition(...)` → `status` сущности обновлён в БД, создан `AuditEvent`.
 Используются тестовые guard/action-заглушки из T6.
 
-## T8. Тест оптимистичной блокировки — Готово
+## T8. Тест оптимистичной блокировки — Готово (перепроверено 2026-09-19)
 
-Критерий приёмки 5: конкурентное расхождение `version` → `OptimisticLockException`
-(обёрнутое Spring в `ObjectOptimisticLockingFailureException`), не потерянное обновление.
+Критерий приёмки 5: конкурентное расхождение `version` → `jakarta.persistence.
+OptimisticLockException` (не обёрнутое Spring — см. ниже почему), не потерянное обновление.
+Подтверждено фактическим прогоном (`./gradlew test --tests TransitionEngineIntegrationTest
+--rerun`, дважды): `tests="2" skipped="0" failures="0" errors="0"` в
+`build/test-results/test/TEST-...IntegrationTest.xml`, тест не пропущен и не закэширован
+(`:test` — `executed`, не `UP-TO-DATE`).
+
+Две вещи, уточнённые по ходу отладки (изначальная формулировка тикета/этого файла была
+неточна в обеих):
+
+1. **Механизм расхождения.** Просто вызвать `target.setVersion(target.getVersion() + 1)` на
+   ещё managed (не detached) сущности **не работает** — Hibernate использует для WHERE-условия
+   `UPDATE` собственный снимок версии из persistence context (`EntityEntry`), а не текущее
+   значение поля через геттер; ручная правка поля молча игнорируется, apdate проходит
+   штатно. Рабочий способ — `entityManager.detach(target)` → обновить `version` в БД напрямую
+   (нативный `update ... set version = version + 1`, имитация уже закоммиченного чужого
+   изменения) → `entityManager.merge(target)`: `merge` сравнивает версию detached-экземпляра
+   с текущей в БД и бросает исключение при расхождении. См.
+   `EngineTestTransactionalRunner.transitionAfterConcurrentVersionBump`.
+2. **Тип исключения.** `merge()` бросает `jakarta.persistence.OptimisticLockException`
+   напрямую — без трансляции Spring в `ObjectOptimisticLockingFailureException`, потому что
+   `EngineTestTransactionalRunner` — обычный `@Component`, не `@Repository`; Spring
+   транслирует persistence-исключения через `PersistenceExceptionTranslationPostProcessor`,
+   который оборачивает именно `@Repository`-бины, а не любой код с `@PersistenceContext`.
+   Это тестовая деталь (как именно тест эмулирует конфликт), а не поведение самого
+   `TransitionEngine` — в реальном вызове через managed-сущность в рамках `@Transactional`
+   конфликт всплывёт на commit через `JpaTransactionManager`, который транслирует его в
+   Spring-иерархию (`ObjectOptimisticLockingFailureException`) уже независимо от `@Repository`.
 
 ## T9. Сборка и прогон — Готово
 

@@ -27,7 +27,7 @@ repositories {
 // ADR-028: явная фиксация версии Hibernate 7.4.0 поверх управляемой Spring Boot 4.0.3 BOM.
 // Ключ свойства ('hibernate.version') соответствует конвенции Spring Boot dependency-management
 // для версий 3.x/4.x; при обновлении Boot-плагина сверить с фактическим списком managed-версий.
-ext['hibernate.version'] = '7.4.0'
+ext['hibernate.version'] = '7.4.0.Final'
 
 dependencyManagement {
     imports {

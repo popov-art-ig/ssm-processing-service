@@ -48,10 +48,21 @@ guard/action-бинов бизнес-логики и без публикации
 `state_machine_config`. Без создания процесса «с нуля» (`MatchService`/
 `RouteGeneratorService`) и без активации этапов (`StageService`).
 
-**Не реализовано** (следующие фазы): `StageService`/`StageStateMachine` и переход
-`ActivateStage`, остальные переходы `ProcessStateMachine` после `StartProcess`,
-`MatchService`/`RouteGeneratorService`/`RouteValidatorService` (создание процесса из
-шаблона), адаптеры (`RoleResolverAdapter`, `EntityAdapter`, `KripAdapter`), REST API
+**Фаза 4 — активация первого этапа.** Готово: `StartProcess` теперь по-настоящему активирует
+маршрут — action `AssignStageTasks` вызывает вложенный переход `ActivateStage`
+(`Pending → Active`, минимальный `StageStateMachine`, `04_state_machines.md` §5.1–5.2) в той
+же транзакции. Guard `PreviousStageCompleted` (для первого этапа — всегда `true`) и три
+action-бина уровня этапа (`AssignParticipantTasks` — `Parallel`/`Sequential`,
+`SetStageStartedAt`, `CalcStageDueAt` — единица `duration` принята как дни); миграция `V19`.
+Без создания новой `StageIteration` при активации и без решений участников (`Decide`,
+`ParticipantStateMachine`) — только сама активация.
+
+**Не реализовано** (следующие фазы): `Decide`/`ParticipantStateMachine`, агрегация решений
+этапа, остальные переходы `StageStateMachine` (`StageApproved`, `StageOnRework`, ...) и
+`ProcessStateMachine` после `StartProcess`, активация второго и следующих этапов
+(`ActivateNextStage`), `MatchService`/`RouteGeneratorService`/`RouteValidatorService`
+(создание процесса из шаблона, включая создание новых `StageIteration` при повторной
+активации), адаптеры (`RoleResolverAdapter`, `EntityAdapter`, `KripAdapter`), REST API
 (`07_api_contract.md`), публикация событий (Outbox → RabbitMQ — `TransitionEngine` уже
 отдаёт `emits` в `TransitionResult`, публикатора пока нет), джобы планировщика
 (автоархивация, напоминания, идемпотентность), тип процесса `UNIFIED`.

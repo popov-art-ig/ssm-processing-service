@@ -1,6 +1,6 @@
 # PHASE-02 — State Machine Engine (TransitionEngine и окружение)
 
-> См. `docs/tickets/TEMPLATE.md` за описанием процесса. Этот тикет самодостаточен: весь
+> См. `doc/tickets/TEMPLATE.md` за описанием процесса. Этот тикет самодостаточен: весь
 > материал, нужный для реализации, скопирован ниже прямо в текст. Пометки вида
 > «(источник: `11_adr.md` ADR-028)» — это атрибуция для истории/ревью, не рабочие ссылки:
 > у вас нет доступа к этим файлам, они существуют только в Claude Project и не
@@ -12,7 +12,8 @@
 
 ## Статус
 
-На проверке (PR открыт)
+Проверено Cowork (2026-09-19) — см. «Ревью Cowork» в конце файла. Смержено в `main` (PR #3,
+`9d4c9b1`).
 
 ## Контекст
 
@@ -356,3 +357,36 @@ create index ix_status_registry_entity on status_registry(entity_type);
    на уровне кода. Claude Code проектирует минимально достаточный контракт для этой фазы
    (guard/action-заглушек) — он неизбежно будет расширяться в фазах, реализующих конкретные
    guards/actions, и это ожидаемо, а не повод блокироваться сейчас.
+
+## Ревью Cowork (2026-09-19)
+
+Смержено в `main` как PR #3 (`9d4c9b1`, ветка `feature/phase-2-state-machine-engine`,
+коммиты `d947ef3`, `dfd7b53`). Сверено построчно с этим тикетом.
+
+**Соответствие спеке — без расхождений уровня ADR.** Алгоритм перехода реализован дословно
+(раздел 2 выше); `TransitionEngine`/`ModelFactory`/`GuardRegistry`/`ActionRegistry`/
+`ComponentResolver` — в пакете `engine`, как требовалось; `toState` валидируется через
+`status_registry` с учётом несовпадения типов `entityType` (String vs enum), как было явно
+оговорено в разделе «Что уже есть». Оба открытых вопроса решены и обоснованы в
+`doc/tasks/PHASE-02-tasks.md` (T4): отсутствие конфигурации → `NoApplicableTransitionException`,
+непройденные guards → `TransitionResult.notPerformed(...)`; `TransitionContext` — минимальный
+record. Запись статуса — через `Consumer<String> statusWriter`, а не интерфейс `HasStatus` —
+альтернатива, прямо разрешённая тикетом («решение по механизму принимает Claude Code»).
+Тесты покрывают все 7 критериев приёмки.
+
+**Побочные находки, не требующие правки спеки:**
+- `testcontainers-bom` в Фазе 1 был зафиксирован на `1.20.4`, хотя `10_architecture.md` §18.4
+  уже тогда указывал `1.21.4` — дефект кода Фазы 1 (не спеки), исправлен до `1.21.4` в этой
+  ветке.
+- Добавлена зависимость `org.springframework.boot:spring-boot-flyway` — в Spring Boot 4.0
+  автоконфигурация Flyway вынесена в отдельный модуль. Чистая механика сборки, ADR-028 не
+  затрагивает.
+
+**Не до конца подтверждено (требует прогона, не спек-расхождение).** В
+`TransitionEngineIntegrationTest.concurrentVersionMismatchThrowsOptimisticLockException`
+тест ожидает `jakarta.persistence.OptimisticLockException`, тогда как T8 в
+`doc/tasks/PHASE-02-tasks.md` описывает реальное исключение как обёрнутое Spring в
+`ObjectOptimisticLockingFailureException` (несвязанная иерархия классов). В облачной
+песочнице Cowork нет Docker/сети для прогона Testcontainers, поэтому подтвердить выполнением
+не удалось — помечено как открытый пункт для проверки при случае, мержу не помешало
+(пользователь подтвердил, что сборка проходит).

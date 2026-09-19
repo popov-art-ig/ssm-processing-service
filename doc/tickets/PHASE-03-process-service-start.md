@@ -12,7 +12,9 @@
 
 ## Статус
 
-На проверке (PR открыт)
+Проверено Cowork (2026-09-19) — см. «Ревью Cowork» в конце файла. Ветка
+`feature/phase-3-process-service-start` (коммиты `bfbf322`, `c45fa57`), PR открыт, ожидает
+мержа.
 
 ## Контекст
 
@@ -334,3 +336,72 @@ values (
    появится `RouteGeneratorService`, потребуется либо расширить эту же guard-реализацию до
    буквальной per-slot проверки, либо осознанно оставить упрощённую версию — решение за
    пределами этой фазы, но тикет той фазы должен явно сослаться на эту заметку.
+
+## Ревью Cowork (2026-09-19)
+
+Проверена ветка `feature/phase-3-process-service-start` (коммиты `bfbf322` — реализация,
+`c45fa57` — README) в сравнении с этим тикетом и с реальным состоянием Фазы 1/2 в `main`
+(`422f5a4`). PR ещё не смержен — ревью выполнено по ветке заранее, чтобы замечания (если
+были бы) не блокировали Фазу 4.
+
+**Соответствие спеке — без расхождений уровня ADR.**
+
+- Миграция `V18__seed_start_process_transition.sql` — построчно совпадает с DDL/схемой
+  `guard_registry`/`action_registry`/`status_registry`/`state_machine_config`/`state_config`/
+  `transition_config`, включая `scope='GLOBAL'` (валидное значение CHECK) и корректный
+  Postgres-синтаксис массивов для `categories`/`applicable_entities`/`guards`/`actions`/`emits`.
+- `StateMachineConfigRepository.findByEntityTypeAndProcessTypeAndVersion` — derived-запрос,
+  использует ровно тот бизнес-ключ (`entityType`, `processType`, `version`), под который есть
+  уникальный индекс `ux_state_machine_config_version`.
+- `ProcessService.startProcess` вызывает `TransitionEngine.transition(...)` с точной сигнатурой
+  и порядком параметров, зафиксированными в Фазе 2 (`entityType, entityId, configId, fromState,
+  trigger, context, statusWriter`); `@Transactional` на методе — та же граница транзакции, что
+  и в Фазе 2. Отсутствие конфига для `(entityType, processType, configVersion)` → явный
+  `IllegalStateException` с читаемым сообщением, не NPE — соответствует «Технические
+  требования» тикета.
+- Все три guard-бина (`IsInitiatorGuard`, `AllDurationsValidGuard`,
+  `AllMandatorySlotsFilledGuard`) и action-бин (`SetStartedAtAction`) реализуют интерфейсы
+  `Guard`/`Action` из Фазы 2, названы бинами ровно так, как указано в `handler` миграции V18,
+  приводят `context.entity()` к `ProcessInstance` внутри себя, как и требовал тикет — движок
+  Фазы 2 не тронут.
+- `AllMandatorySlotsFilledGuard` реализует ровно то упрощение, что описано в тикете (раздел 2,
+  открытый вопрос №3): проверка по последней итерации (`max(iterationIdx)`) каждого
+  `mandatory`-этапа, а не буквальный per-slot `SlotTemplate.required`. Упрощение явно
+  задокументировано и в Javadoc, и в `guard_registry.description` самой миграции («Упрощённая
+  реализация PHASE-03») — то есть видно из БД, а не только из кода. Корректно обрабатывает
+  граничный случай «у mandatory-этапа вообще нет итераций» (`orElse(false)`), что явно
+  покрыто отдельным тестом.
+- Открытый вопрос №1 (пакеты) решён и обоснован в `doc/tasks/PHASE-03-tasks.md` T3:
+  `ProcessRepository` → `domain.process` (агрегатный репозиторий, а не служебный инструмент
+  одного сервиса, в отличие от репозиториев `engine.model`/`engine.registry` Фазы 2 —
+  разумное и явно объяснённое отличие в соглашении), `ProcessService` → новый пакет
+  `service`, guard/action-бины → `service.guard`/`service.action`.
+- Открытый вопрос №2 (повторный `StartProcess`) решён без нового кода: в V18 для
+  `from_state='InProgress'` вообще нет строки `transition_config`, поэтому
+  `TransitionEngine.transition(...)` кидает `NoApplicableTransitionException` — это
+  использование уже принятого в Фазе 2 разделения «нет конфигурации» vs «guards не прошли»,
+  прямо в духе тикета. Критерий приёмки 5 покрыт тестом
+  `repeatedStartThrowsNoApplicableTransition`.
+- `AssignStageTasks`/`PublishDomainEvent` не реализованы, как и предписывал тикет (раздел 4);
+  `emits: ['approval.process.started']` возвращается движком без изменений — тест
+  `startsProcessWhenAllGuardsPass` проверяет `result.emittedEvents()` напрямую. Out-of-scope
+  пункты (`MatchService`, `RouteGeneratorService`, `StageService`, REST API, `UNIFIED`) не
+  затронуты — в diff их нет.
+
+**Полнота тестов.** `ProcessServiceIntegrationTest` (5 сценариев, реальные миграции
+`V1`–`V18`, без тестовых заглушек — как и требовал тикет) построчно покрывает все 5
+критериев приёмки, включая явно сверенный `AuditEvent.action == "StartProcess"`. Юнит-тесты
+на каждый guard проверяют не только основной путь, но и граничные случаи (актёр `null`,
+`duration = null`, mandatory-этап без единой итерации) — шире минимума, заданного тикетом.
+
+**Побочных находок, требующих правки спеки или ADR, не обнаружено.** Все использованные поля
+и enum'ы (`StageType.APPROVAL`, `ParticipantRole.APPROVER`, `entityType`/`entityId`/
+`originalOrderIdx` и т.д.) сверены построчно с реальными сущностями Фазы 1 — ничего не
+придумано и не изменено вне объёма этой фазы; `build.gradle` в диффе PR отсутствует — новых
+зависимостей не потребовалось.
+
+**Итог:** реализация полностью соответствует тикету, оба открытых вопроса и заранее
+согласованные упрощения обоснованы и явно задокументированы (в коде и в БД). Замечаний нет,
+можно мержить. Напоминание на будущее (уже зафиксировано в «Открытые вопросы» п.3 выше):
+когда дойдёт очередь до фазы с `RouteGeneratorService`, её тикет должен явно сослаться на
+эту заметку и решить судьбу `AllMandatorySlotsFilledGuard`.

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -12,15 +13,18 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import ru.coordination.approval.domain.audit.AuditEvent;
+import ru.coordination.approval.domain.common.ExecutionOrder;
+import ru.coordination.approval.domain.common.LifecycleStatus;
 import ru.coordination.approval.domain.common.ProcessType;
 import ru.coordination.approval.domain.common.StageType;
 import ru.coordination.approval.domain.process.Participant;
+import ru.coordination.approval.domain.process.ParticipantRepository;
 import ru.coordination.approval.domain.process.ParticipantRole;
 import ru.coordination.approval.domain.process.ProcessInstance;
 import ru.coordination.approval.domain.process.ProcessRepository;
 import ru.coordination.approval.domain.process.StageInstance;
 import ru.coordination.approval.domain.process.StageIteration;
-import ru.coordination.approval.domain.common.LifecycleStatus;
+import ru.coordination.approval.domain.process.StageRepository;
 import ru.coordination.approval.domain.template.Template;
 import ru.coordination.approval.domain.template.TemplateRepository;
 import ru.coordination.approval.engine.AuditEventRepository;
@@ -28,9 +32,9 @@ import ru.coordination.approval.engine.TransitionResult;
 import ru.coordination.approval.engine.exception.NoApplicableTransitionException;
 
 /**
- * Интеграционный тест {@link ProcessService} (Testcontainers, PHASE-03 T9) — реальные
- * миграции {@code V1}-{@code V18} (конфиг/реестры из {@code V18}, не тестовые заглушки).
- * Критерии приёмки 1-5 тикета.
+ * Интеграционный тест {@link ProcessService} (Testcontainers) — реальные миграции
+ * {@code V1}-{@code V19} (конфиг/реестры не тестовые заглушки). Критерии приёмки PHASE-03
+ * (1-5) и PHASE-04 (1-3, активация первого этапа как часть {@code StartProcess}).
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -41,60 +45,103 @@ class ProcessServiceIntegrationTest {
     @Autowired
     private ProcessRepository processRepository;
     @Autowired
+    private StageRepository stageRepository;
+    @Autowired
+    private ParticipantRepository participantRepository;
+    @Autowired
     private TemplateRepository templateRepository;
     @Autowired
     private AuditEventRepository auditEventRepository;
 
     @Test
-    void startsProcessWhenAllGuardsPass() {
+    void startsProcessAndActivatesFirstStageWhenAllGuardsPass() {
         UUID initiatorId = UUID.randomUUID();
-        ProcessInstance process = persistProcess(initiatorId, new StageSpec(true, 3, 1));
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 2, ExecutionOrderSpec.PARALLEL));
 
-        TransitionResult result = processService.startProcess(process.getId(), initiatorId);
+        TransitionResult result = processService.startProcess(fixture.process().getId(), initiatorId);
 
         assertThat(result.performed()).isTrue();
         assertThat(result.toState()).isEqualTo("InProgress");
         assertThat(result.emittedEvents()).containsExactly("approval.process.started");
 
-        ProcessInstance persisted = processRepository.findById(process.getId()).orElseThrow();
-        assertThat(persisted.getStatus()).isEqualTo("InProgress");
-        assertThat(persisted.getStartedAt()).isNotNull();
+        ProcessInstance persistedProcess = processRepository.findById(fixture.process().getId()).orElseThrow();
+        assertThat(persistedProcess.getStatus()).isEqualTo("InProgress");
+        assertThat(persistedProcess.getStartedAt()).isNotNull();
 
-        List<AuditEvent> events = auditEventRepository.findAll().stream()
-                .filter(e -> e.getEntityId().equals(process.getId()))
+        // PHASE-04, критерий 1: AssignStageTasks (внутри StartProcess) активирует первый этап.
+        StageInstance persistedStage = stageRepository.findById(fixture.firstStageId()).orElseThrow();
+        assertThat(persistedStage.getStatus()).isEqualTo("Active");
+        assertThat(persistedStage.getStartedAt()).isNotNull();
+        assertThat(persistedStage.getDueAt())
+                .isEqualTo(persistedStage.getStartedAt().plus(persistedStage.getDuration(), ChronoUnit.DAYS));
+
+        // PHASE-04, критерий 2: executionOrder = Parallel -> все участники Assigned.
+        List<Participant> participants = participantRepository.findAllById(fixture.firstStageParticipantIds());
+        assertThat(participants).hasSize(2);
+        assertThat(participants).allSatisfy(p -> {
+            assertThat(p.getStatus()).isEqualTo("Assigned");
+            assertThat(p.getAssignedAt()).isNotNull();
+        });
+
+        // PHASE-04, критерий 1: 2 AuditEvent за один вызов (PROCESS/StartProcess, STAGE/ActivateStage).
+        List<AuditEvent> processEvents = auditEventRepository.findAll().stream()
+                .filter(e -> e.getEntityId().equals(fixture.process().getId()))
                 .toList();
-        assertThat(events).hasSize(1);
-        assertThat(events.get(0).getAction()).isEqualTo("StartProcess");
+        assertThat(processEvents).hasSize(1);
+        assertThat(processEvents.get(0).getAction()).isEqualTo("StartProcess");
+
+        List<AuditEvent> stageEvents = auditEventRepository.findAll().stream()
+                .filter(e -> e.getEntityId().equals(fixture.firstStageId()))
+                .toList();
+        assertThat(stageEvents).hasSize(1);
+        assertThat(stageEvents.get(0).getAction()).isEqualTo("ActivateStage");
+    }
+
+    @Test
+    void assignsOnlyFirstParticipantWhenExecutionOrderIsSequential() {
+        UUID initiatorId = UUID.randomUUID();
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 2, ExecutionOrderSpec.SEQUENTIAL));
+
+        processService.startProcess(fixture.process().getId(), initiatorId);
+
+        List<Participant> participants = fixture.firstStageParticipantIds().stream()
+                .map(id -> participantRepository.findById(id).orElseThrow())
+                .sorted((a, b) -> Integer.compare(a.getOrderIdx(), b.getOrderIdx()))
+                .toList();
+        assertThat(participants.get(0).getStatus()).isEqualTo("Assigned");
+        assertThat(participants.get(0).getAssignedAt()).isNotNull();
+        assertThat(participants.get(1).getStatus()).isEqualTo("Pending");
+        assertThat(participants.get(1).getAssignedAt()).isNull();
     }
 
     @Test
     void doesNotStartWhenActorIsNotInitiator() {
         UUID initiatorId = UUID.randomUUID();
-        ProcessInstance process = persistProcess(initiatorId, new StageSpec(true, 3, 1));
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 1, ExecutionOrderSpec.PARALLEL));
 
-        TransitionResult result = processService.startProcess(process.getId(), UUID.randomUUID());
+        TransitionResult result = processService.startProcess(fixture.process().getId(), UUID.randomUUID());
 
         assertThat(result.performed()).isFalse();
-        assertThat(processRepository.findById(process.getId()).orElseThrow().getStatus()).isEqualTo("Draft");
+        assertThat(processRepository.findById(fixture.process().getId()).orElseThrow().getStatus()).isEqualTo("Draft");
     }
 
     @Test
     void doesNotStartWhenMandatoryStageHasNoParticipants() {
         UUID initiatorId = UUID.randomUUID();
-        ProcessInstance process = persistProcess(initiatorId, new StageSpec(true, 3, 0));
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 0, ExecutionOrderSpec.PARALLEL));
 
-        TransitionResult result = processService.startProcess(process.getId(), initiatorId);
+        TransitionResult result = processService.startProcess(fixture.process().getId(), initiatorId);
 
         assertThat(result.performed()).isFalse();
-        assertThat(processRepository.findById(process.getId()).orElseThrow().getStatus()).isEqualTo("Draft");
+        assertThat(processRepository.findById(fixture.process().getId()).orElseThrow().getStatus()).isEqualTo("Draft");
     }
 
     @Test
     void startsWhenNonMandatoryStageHasNoParticipants() {
         UUID initiatorId = UUID.randomUUID();
-        ProcessInstance process = persistProcess(initiatorId, new StageSpec(false, 3, 0));
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(false, 3, 0, ExecutionOrderSpec.PARALLEL));
 
-        TransitionResult result = processService.startProcess(process.getId(), initiatorId);
+        TransitionResult result = processService.startProcess(fixture.process().getId(), initiatorId);
 
         assertThat(result.performed()).isTrue();
     }
@@ -102,17 +149,24 @@ class ProcessServiceIntegrationTest {
     @Test
     void repeatedStartThrowsNoApplicableTransition() {
         UUID initiatorId = UUID.randomUUID();
-        ProcessInstance process = persistProcess(initiatorId, new StageSpec(true, 3, 1));
-        processService.startProcess(process.getId(), initiatorId);
+        ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 1, ExecutionOrderSpec.PARALLEL));
+        processService.startProcess(fixture.process().getId(), initiatorId);
 
         assertThrows(NoApplicableTransitionException.class,
-                () -> processService.startProcess(process.getId(), initiatorId));
+                () -> processService.startProcess(fixture.process().getId(), initiatorId));
     }
 
-    private record StageSpec(boolean mandatory, int duration, int participantCount) {
+    private enum ExecutionOrderSpec {
+        PARALLEL, SEQUENTIAL
     }
 
-    private ProcessInstance persistProcess(UUID initiatorId, StageSpec... stageSpecs) {
+    private record StageSpec(boolean mandatory, int duration, int participantCount, ExecutionOrderSpec executionOrder) {
+    }
+
+    private record ProcessFixture(ProcessInstance process, UUID firstStageId, List<UUID> firstStageParticipantIds) {
+    }
+
+    private ProcessFixture persistProcess(UUID initiatorId, StageSpec... stageSpecs) {
         Template template = persistTemplate();
         Instant now = Instant.now();
 
@@ -130,6 +184,8 @@ class ProcessServiceIntegrationTest {
                 .build();
 
         List<StageInstance> stages = new ArrayList<>();
+        UUID firstStageId = null;
+        List<UUID> firstStageParticipantIds = List.of();
         int orderIdx = 0;
         for (StageSpec spec : stageSpecs) {
             StageInstance stage = StageInstance.builder()
@@ -140,16 +196,20 @@ class ProcessServiceIntegrationTest {
                     .stageType(StageType.APPROVAL)
                     .duration(spec.duration())
                     .mandatory(spec.mandatory())
-                    .status("ACTIVE")
+                    .executionOrder(spec.executionOrder() == ExecutionOrderSpec.SEQUENTIAL
+                            ? ExecutionOrder.SEQUENTIAL
+                            : ExecutionOrder.PARALLEL)
+                    // Начальный статус STAGE state machine (V19: PROCESS/STANDARD/v1, entityType=STAGE) -
+                    // ActivateStage ищет переход именно из "Pending".
+                    .status("Pending")
                     .createdAt(now)
                     .build();
-            orderIdx++;
 
             StageIteration iteration = StageIteration.builder()
                     .id(UUID.randomUUID())
                     .stage(stage)
                     .iterationIdx(0)
-                    .status("ACTIVE")
+                    .status("Active")
                     .startedAt(now)
                     .createdAt(now)
                     .build();
@@ -161,7 +221,8 @@ class ProcessServiceIntegrationTest {
                         .stageIteration(iteration)
                         .userId(UUID.randomUUID())
                         .role(ParticipantRole.APPROVER)
-                        .status("PENDING")
+                        .orderIdx(i)
+                        .status("Pending")
                         .createdAt(now)
                         .updatedAt(now)
                         .build());
@@ -169,10 +230,17 @@ class ProcessServiceIntegrationTest {
             iteration.setParticipants(participants);
             stage.setIterations(List.of(iteration));
             stages.add(stage);
+
+            if (orderIdx == 0) {
+                firstStageId = stage.getId();
+                firstStageParticipantIds = participants.stream().map(Participant::getId).toList();
+            }
+            orderIdx++;
         }
         process.setStages(stages);
 
-        return processRepository.save(process);
+        ProcessInstance saved = processRepository.save(process);
+        return new ProcessFixture(saved, firstStageId, firstStageParticipantIds);
     }
 
     private Template persistTemplate() {

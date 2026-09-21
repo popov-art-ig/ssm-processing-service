@@ -28,7 +28,7 @@ class IsAssignedParticipantGuardTest {
 
         TransitionContext context = new TransitionContext(participant, userId, ActorType.USER, Map.of());
 
-        assertThat(guard.execute(context)).isTrue();
+        assertThat(guard.evaluate(context)).isTrue();
     }
 
     @Test
@@ -45,7 +45,7 @@ class IsAssignedParticipantGuardTest {
 
         TransitionContext context = new TransitionContext(participant, differentUserId, ActorType.USER, Map.of());
 
-        assertThat(guard.execute(context)).isFalse();
+        assertThat(guard.evaluate(context)).isFalse();
     }
 
     @Test
@@ -61,7 +61,7 @@ class IsAssignedParticipantGuardTest {
 
         TransitionContext context = new TransitionContext(participant, userId, ActorType.USER, Map.of());
 
-        assertThat(guard.execute(context)).isFalse();
+        assertThat(guard.evaluate(context)).isFalse();
     }
 
     @Test
@@ -77,7 +77,7 @@ class IsAssignedParticipantGuardTest {
 
         TransitionContext context = new TransitionContext(participant, null, ActorType.SYSTEM, Map.of());
 
-        assertThat(guard.execute(context)).isFalse();
+        assertThat(guard.evaluate(context)).isFalse();
     }
 
     @Test
@@ -87,6 +87,6 @@ class IsAssignedParticipantGuardTest {
 
         TransitionContext context = new TransitionContext(notAParticipant, userId, ActorType.USER, Map.of());
 
-        assertThat(guard.execute(context)).isFalse();
+        assertThat(guard.evaluate(context)).isFalse();
     }
 }

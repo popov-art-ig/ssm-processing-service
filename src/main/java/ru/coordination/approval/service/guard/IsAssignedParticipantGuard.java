@@ -9,7 +9,7 @@ import ru.coordination.approval.engine.registry.Guard;
 public class IsAssignedParticipantGuard implements Guard {
 
     @Override
-    public boolean execute(TransitionContext context) {
+    public boolean evaluate(TransitionContext context) {
         if (!(context.entity() instanceof Participant participant)) {
             return false;
         }

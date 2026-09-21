@@ -45,6 +45,9 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-amqp'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 
+    // OpenAPI/Swagger документация REST API
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.7.0'
+
     // Миграции схемы БД (08_db_schema.md §27). С Spring Boot 4.0 автоконфигурация Flyway
     // вынесена в отдельный модуль (org.springframework.boot.flyway.autoconfigure), не
     // включённый транзитивно ни одним из уже подключённых starter'ов.

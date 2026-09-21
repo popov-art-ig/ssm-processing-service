@@ -6,4 +6,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface RemarkRepository extends JpaRepository<Remark, UUID> {
     boolean existsByProcessIdAndStatusIn(UUID processId, List<String> statuses);
+
+    List<Remark> findByProcessId(UUID processId);
+
+    List<Remark> findByProcessIdAndStatus(UUID processId, String status);
 }

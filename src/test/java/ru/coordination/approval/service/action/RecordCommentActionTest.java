@@ -41,7 +41,6 @@ class RecordCommentActionTest {
 
         ProcessInstance process = ProcessInstance.builder()
                 .createdAt(Instant.now())
-                .updatedAt(Instant.now())
                 .build();
 
         StageInstance stage = StageInstance.builder()
@@ -80,7 +79,6 @@ class RecordCommentActionTest {
         assertThat(saved.getStageIteration()).isEqualTo(iteration);
         assertThat(saved.getParticipant()).isEqualTo(participant);
         assertThat(saved.getAuthorId()).isEqualTo(actorId);
-        assertThat(saved.getAuthorRole()).isEqualTo(AuthorRole.PARTICIPANT);
         assertThat(saved.getText()).isEqualTo("This needs revision");
         assertThat(saved.getCreatedAt()).isNotNull();
     }

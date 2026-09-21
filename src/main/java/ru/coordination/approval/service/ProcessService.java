@@ -53,4 +53,34 @@ public class ProcessService {
                 context,
                 process::setStatus);
     }
+
+    @Transactional
+    public TransitionResult resume(UUID processId, Integer targetStageOrderIdx, UUID actorId) {
+        ProcessInstance process = processRepository.findById(processId)
+                .orElseThrow(() -> new IllegalArgumentException("Process not found"));
+
+        if (!"OnRework".equals(process.getStatus())) {
+            throw new IllegalStateException("Process is not OnRework");
+        }
+
+        StateMachineConfig processConfig = stateMachineConfigRepository
+                .findByEntityTypeAndProcessTypeAndVersion(
+                        EntityType.PROCESS,
+                        process.getProcessType(),
+                        process.getConfigVersion())
+                .orElseThrow(() -> new IllegalStateException("Process config not found"));
+
+        Map<String, Object> parameters = Map.of("targetStageOrderIdx", targetStageOrderIdx);
+        TransitionContext context = new TransitionContext(
+                process, actorId, ActorType.USER, parameters);
+
+        return transitionEngine.transition(
+                EntityType.PROCESS,
+                process.getId(),
+                processConfig.getId(),
+                process.getStatus(),
+                TriggerType.USER_ACTION,
+                context,
+                process::setStatus);
+    }
 }

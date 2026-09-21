@@ -31,11 +31,11 @@ import ru.coordination.approval.domain.statemachine.TriggerType;
 import ru.coordination.approval.engine.model.StateConfigRepository;
 import ru.coordination.approval.engine.model.StateMachineConfigRepository;
 import ru.coordination.approval.engine.model.TransitionConfigRepository;
+import ru.coordination.approval.domain.process.ProcessRepository;
 import ru.coordination.approval.engine.registry.ActionRegistryRepository;
 import ru.coordination.approval.engine.registry.GuardRegistryRepository;
-import ru.coordination.approval.engine.registry.StatusRegistryRepository;
+import ru.coordination.approval.engine.StatusRegistryRepository;
 import ru.coordination.approval.engine.testsupport.EngineTestTransactionalRunner;
-import ru.coordination.approval.repository.ProcessInstanceRepository;
 
 /**
  * Интеграционный тест PHASE-07: завершение последнего этапа → активация следующего
@@ -72,7 +72,7 @@ class ProcessCompletionIntegrationTest {
     private StatusRegistryRepository statusRegistryRepository;
 
     @Autowired
-    private ProcessInstanceRepository processInstanceRepository;
+    private ProcessRepository processRepository;
 
     @Autowired
     private EngineTestTransactionalRunner runner;
@@ -351,16 +351,16 @@ class ProcessCompletionIntegrationTest {
                 process.getStages().add(stage);
             }
 
-            return processInstanceRepository.save(process).getId();
+            return processRepository.save(process).getId();
         });
 
         // Complete stage 1 → should activate stage 2
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             StageInstance stage1 = process.getStages().get(0);
             stage1.setStatus("Approved");
             stage1.setCompletedAt(Instant.now());
-            processInstanceRepository.save(process);
+            processRepository.save(process);
 
             transitionEngine.transition(
                     EntityType.STAGE,
@@ -374,7 +374,7 @@ class ProcessCompletionIntegrationTest {
 
         // Verify stage 2 is now Active, process still InProgress
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             assertThat(process.getStages().get(0).getStatus()).isEqualTo("Approved");
             assertThat(process.getStages().get(1).getStatus()).isEqualTo("Active");
             assertThat(process.getStages().get(2).getStatus()).isEqualTo("Pending");
@@ -384,11 +384,11 @@ class ProcessCompletionIntegrationTest {
 
         // Complete stage 2 → should activate stage 3
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             StageInstance stage2 = process.getStages().get(1);
             stage2.setStatus("Approved");
             stage2.setCompletedAt(Instant.now());
-            processInstanceRepository.save(process);
+            processRepository.save(process);
 
             transitionEngine.transition(
                     EntityType.STAGE,
@@ -402,18 +402,18 @@ class ProcessCompletionIntegrationTest {
 
         // Verify stage 3 is now Active
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             assertThat(process.getStages().get(2).getStatus()).isEqualTo("Active");
             assertThat(process.getStatus()).isEqualTo("InProgress");
         });
 
         // Complete stage 3 → no more stages, process should complete
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             StageInstance stage3 = process.getStages().get(2);
             stage3.setStatus("Approved");
             stage3.setCompletedAt(Instant.now());
-            processInstanceRepository.save(process);
+            processRepository.save(process);
 
             transitionEngine.transition(
                     EntityType.STAGE,
@@ -427,7 +427,7 @@ class ProcessCompletionIntegrationTest {
 
         // Verify process is Approved and has completedAt
         runner.runInNewTransaction(() -> {
-            ProcessInstance process = processInstanceRepository.findById(processId).orElseThrow();
+            ProcessInstance process = processRepository.findById(processId).orElseThrow();
             assertThat(process.getStatus()).isEqualTo("Approved");
             assertThat(process.getCompletedAt()).isNotNull();
         });

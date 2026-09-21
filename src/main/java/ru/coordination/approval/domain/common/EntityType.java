@@ -11,5 +11,6 @@ public enum EntityType {
     PARTICIPANT,
     ADDITIONAL_APPROVER,
     FINAL_DECISION,
-    REMARK
+    REMARK,
+    TEMPLATE
 }

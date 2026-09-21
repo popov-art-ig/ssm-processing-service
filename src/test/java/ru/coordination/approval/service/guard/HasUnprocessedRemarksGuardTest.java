@@ -18,33 +18,16 @@ import ru.coordination.approval.domain.process.RemarkRepository;
 import ru.coordination.approval.engine.TransitionContext;
 
 @ExtendWith(MockitoExtension.class)
-class AllRemarksProcessedGuardTest {
+class HasUnprocessedRemarksGuardTest {
 
     @Mock
     private RemarkRepository remarkRepository;
 
     @InjectMocks
-    private AllRemarksProcessedGuard guard;
+    private HasUnprocessedRemarksGuard guard;
 
     @Test
-    void returnsTrueWhenNoUnprocessedRemarks() {
-        UUID processId = UUID.randomUUID();
-
-        ProcessInstance process = ProcessInstance.builder()
-                .id(processId)
-                .createdAt(Instant.now())
-                .build();
-
-        TransitionContext context = new TransitionContext(process, UUID.randomUUID(), ActorType.USER, Map.of());
-
-        when(remarkRepository.existsByProcessIdAndStatusIn(processId, List.of("Open", "InProgress")))
-                .thenReturn(false);
-
-        assertThat(guard.evaluate(context)).isTrue();
-    }
-
-    @Test
-    void returnsFalseWhenUnprocessedRemarksExist() {
+    void returnsTrueWhenUnprocessedRemarksExist() {
         UUID processId = UUID.randomUUID();
 
         ProcessInstance process = ProcessInstance.builder()
@@ -57,14 +40,31 @@ class AllRemarksProcessedGuardTest {
         when(remarkRepository.existsByProcessIdAndStatusIn(processId, List.of("Open", "InProgress")))
                 .thenReturn(true);
 
+        assertThat(guard.evaluate(context)).isTrue();
+    }
+
+    @Test
+    void returnsFalseWhenNoUnprocessedRemarks() {
+        UUID processId = UUID.randomUUID();
+
+        ProcessInstance process = ProcessInstance.builder()
+                .id(processId)
+                .createdAt(Instant.now())
+                .build();
+
+        TransitionContext context = new TransitionContext(process, UUID.randomUUID(), ActorType.USER, Map.of());
+
+        when(remarkRepository.existsByProcessIdAndStatusIn(processId, List.of("Open", "InProgress")))
+                .thenReturn(false);
+
         assertThat(guard.evaluate(context)).isFalse();
     }
 
     @Test
-    void returnsTrueWhenEntityIsNotProcessInstance() {
+    void returnsFalseWhenEntityIsNotProcessInstance() {
         String notAProcess = "some string";
         TransitionContext context = new TransitionContext(notAProcess, UUID.randomUUID(), ActorType.USER, Map.of());
 
-        assertThat(guard.evaluate(context)).isTrue();
+        assertThat(guard.evaluate(context)).isFalse();
     }
 }

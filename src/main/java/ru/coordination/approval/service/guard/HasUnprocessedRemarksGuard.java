@@ -8,22 +8,22 @@ import ru.coordination.approval.engine.TransitionContext;
 import ru.coordination.approval.engine.registry.Guard;
 
 /**
- * G-P-008 «Все замечания процесса обработаны» (PHASE-08, обновлён в PHASE-11).
- * Проверяет отсутствие замечаний в статусах Open или InProgress.
+ * G-P-010 «У процесса есть необработанные замечания» (PHASE-11).
+ * Используется для блокировки возобновления процесса при наличии необработанных замечаний.
  */
-@Component("allRemarksProcessedGuard")
+@Component("hasUnprocessedRemarksGuard")
 @RequiredArgsConstructor
-public class AllRemarksProcessedGuard implements Guard {
+public class HasUnprocessedRemarksGuard implements Guard {
 
     private final RemarkRepository remarkRepository;
 
     @Override
     public boolean evaluate(TransitionContext context) {
         if (!(context.entity() instanceof ProcessInstance process)) {
-            return true;
+            return false;
         }
 
-        return !remarkRepository.existsByProcessIdAndStatusIn(
+        return remarkRepository.existsByProcessIdAndStatusIn(
                 process.getId(),
                 java.util.List.of("Open", "InProgress"));
     }

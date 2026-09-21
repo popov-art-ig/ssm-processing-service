@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -61,7 +62,7 @@ class ActivateNextStageActionTest {
                         eq(TriggerType.SYSTEM_ACTION),
                         any(TransitionContext.class),
                         any(Consumer.class)))
-                .thenReturn(TransitionResult.performed("Pending", "Active", "ActivateStage", new String[] {}));
+                .thenReturn(TransitionResult.performed("Pending", "Active", "ActivateStage", List.of()));
 
         TransitionContext context =
                 new TransitionContext(currentStage, UUID.randomUUID(), ActorType.SYSTEM, Map.of());

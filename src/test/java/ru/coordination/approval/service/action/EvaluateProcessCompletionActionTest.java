@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -60,7 +61,7 @@ class EvaluateProcessCompletionActionTest {
                         eq(TriggerType.SYSTEM_ACTION),
                         any(TransitionContext.class),
                         any(Consumer.class)))
-                .thenReturn(TransitionResult.performed("InProgress", "Approved", "ProcessApproved", new String[] {}));
+                .thenReturn(TransitionResult.performed("InProgress", "Approved", "ProcessApproved", List.of()));
 
         TransitionContext context = new TransitionContext(stage, UUID.randomUUID(), ActorType.SYSTEM, Map.of());
 
@@ -152,7 +153,7 @@ class EvaluateProcessCompletionActionTest {
                         any(TransitionContext.class),
                         any(Consumer.class)))
                 .thenReturn(TransitionResult.performed(
-                        "InProgress", "ApprovedWithComments", "ProcessApprovedWithComments", new String[] {}));
+                        "InProgress", "ApprovedWithComments", "ProcessApprovedWithComments", List.of()));
 
         TransitionContext context = new TransitionContext(stage, UUID.randomUUID(), ActorType.SYSTEM, Map.of());
 

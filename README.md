@@ -95,13 +95,22 @@ action-бин `SetStageCompletedAt` фиксирует время закрыти
 `RejectRemark` и статусами Draft/Open/InProgress/Processed/Rejected. Обновлён guard
 `AllRemarksProcessedGuard` из фазы 8 для реальной проверки наличия необработанных замечаний.
 
+**Фаза 14 — управление шаблонами (Template Management).** Готово: `TemplateService` с методами
+`create()`, `publish()`, `deprecate()`, `archive()`; guard-бины (`AllMandatorySlotsValidGuard`,
+`NoActiveProcessesGuard`), action-бин (`ValidateTemplateStructureAction` — валидация структуры
+шаблона: обязательность `executionOrder`/`decisionMode` для STANDARD, запрет для UNIFIED,
+валидация `allowedReturnStages`, проверка `stageTemplate` у слотов); миграция `V25` добавляет
+`TemplateStateMachine` с переходами `CreateTemplate`, `PublishTemplate`, `DeprecateTemplate`,
+`ArchiveTemplate` и статусами Draft/Published/Deprecated/Archived. Шаблоны теперь имеют полный
+жизненный цикл с валидацией перед публикацией и защитой от изменений активных шаблонов.
+
 **Не реализовано** (следующие фазы): `MatchService`/`RouteGeneratorService`/
 `RouteValidatorService` (создание процесса из шаблона), адаптеры (`RoleResolverAdapter`,
 `EntityAdapter`, `KripAdapter`), REST API (`07_api_contract.md`), публикация событий
 (Outbox → RabbitMQ — `TransitionEngine` уже отдаёт `emits` в `TransitionResult`, публикатора
 пока нет), джобы планировщика (автоархивация, напоминания, идемпотентность), тип процесса
 `UNIFIED`, дополнительные согласующие (PHASE-10), уведомления (PHASE-12), реакции на события
-(PHASE-13), авторизация и права доступа (PHASE-14).
+(PHASE-13).
 
 Таблицы `idempotency_key`, `outbox_event` и `shedlock` пока не имеют JPA-сущностей —
 `shedlock` управляется самой библиотекой Shedlock, а `idempotency_key`/`outbox_event`

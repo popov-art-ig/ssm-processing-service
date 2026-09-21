@@ -1,5 +1,6 @@
 package ru.coordination.approval.domain.process;
 
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -10,4 +11,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * (см. {@code doc/tasks/PHASE-03-tasks.md} T3).
  */
 public interface ProcessRepository extends JpaRepository<ProcessInstance, UUID> {
+
+    List<ProcessInstance> findByTemplateRef(UUID templateRef);
 }

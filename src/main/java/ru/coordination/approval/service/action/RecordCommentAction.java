@@ -26,12 +26,11 @@ public class RecordCommentAction implements Action {
         }
 
         Comment comment = Comment.builder()
-                .process(participant.getStageIteration().getStageInstance().getProcessInstance())
-                .stage(participant.getStageIteration().getStageInstance())
+                .process(participant.getStageIteration().getStage().getProcess())
+                .stage(participant.getStageIteration().getStage())
                 .stageIteration(participant.getStageIteration())
                 .participant(participant)
                 .authorId(context.actorId())
-                .authorRole(AuthorRole.PARTICIPANT)
                 .text(commentText)
                 .createdAt(Instant.now())
                 .build();

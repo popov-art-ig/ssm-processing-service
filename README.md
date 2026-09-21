@@ -57,15 +57,51 @@ action-бина уровня этапа (`AssignParticipantTasks` — `Parallel`
 Без создания новой `StageIteration` при активации и без решений участников (`Decide`,
 `ParticipantStateMachine`) — только сама активация.
 
-**Не реализовано** (следующие фазы): `Decide`/`ParticipantStateMachine`, агрегация решений
-этапа, остальные переходы `StageStateMachine` (`StageApproved`, `StageOnRework`, ...) и
-`ProcessStateMachine` после `StartProcess`, активация второго и следующих этапов
-(`ActivateNextStage`), `MatchService`/`RouteGeneratorService`/`RouteValidatorService`
-(создание процесса из шаблона, включая создание новых `StageIteration` при повторной
-активации), адаптеры (`RoleResolverAdapter`, `EntityAdapter`, `KripAdapter`), REST API
-(`07_api_contract.md`), публикация событий (Outbox → RabbitMQ — `TransitionEngine` уже
-отдаёт `emits` в `TransitionResult`, публикатора пока нет), джобы планировщика
-(автоархивация, напоминания, идемпотентность), тип процесса `UNIFIED`.
+**Фаза 5 — решения участников (Decide).** Готово: `ParticipantStateMachine` с переходами
+`StartDecision`, `Decide` (Approve/Reject/ApproveWithComments), guard-бины
+(`IsAssignedParticipant`, `IsValidDecisionType`, `HasCommentWhenRequired`), action-бины
+(`RecordDecision`, `SetDecidedAt`, `RecordComment` — запись в таблицу `comment`); миграция
+`V20`. Метод `DecisionService.decide()` обрабатывает решения участников, но агрегация решений
+на уровне этапа (`StageStateMachine` переходы `StageApproved`/`StageOnRework`) — следующая фаза.
+
+**Фаза 6 — агрегация решений и закрытие этапа.** Готово: guard-бины
+(`AllParticipantsDecided`, `AggregationApproved`, `AggregationApprovedWithComments`,
+`AggregationRework`) реализуют логику подсчёта голосов по `decisionMode` (ALL/ANY/MAJORITY),
+action-бин `SetStageCompletedAt` фиксирует время закрытия; миграция `V21` добавляет три
+перехода `StageStateMachine` (`StageApproved`, `StageApprovedWithComments`, `StageOnRework`).
+Этап теперь автоматически меняет статус после того, как все участники приняли решение.
+
+**Фаза 7 — завершение процесса и активация следующего этапа.** Готово: guard-бины
+(`AllStagesCompleted`, `HasComments`), action-бины (`ActivateNextStage`, `CompleteProcess`,
+`EvaluateProcessCompletion`); миграция `V22` добавляет переходы `ProcessStateMachine`
+(`ProcessApproved`, `ProcessApprovedWithComments`) и обновляет переходы `StageApproved`/
+`StageApprovedWithComments` добавлением actions для активации следующего этапа и проверки
+завершённости процесса. Процесс автоматически завершается, когда все этапы согласованы.
+
+**Фаза 8 — возврат на доработку и возобновление процесса.** Готово: guard-бины
+(`HasStageOnRework`, `AllRemarksProcessedGuard` — заглушка, `IsTargetStageAllowedGuard` —
+упрощённая реализация), action-бины (`EvaluateProcessReworkAction`, `RejectStagesFromAction`,
+`ActivateTargetStageAction`); миграция `V23` добавляет переходы `ProcessRework`
+(InProgress → OnRework), `ResumeProcess` (OnRework → InProgress), `ReactivateStage`
+(OnRework → Active для этапов), статусы `OnRework` (PROCESS) и `Rejected` (STAGE).
+Метод `ProcessService.resumeProcess()` позволяет инициатору вернуть процесс на указанный
+этап после доработки замечаний.
+
+**Фаза 11 — замечания и комментарии (Remark lifecycle).** Готово: `RemarkService` с методами
+`createRemark()`, `processRemark()`, `rejectRemark()`; guard-бины (`IsParticipant` — заглушка,
+`IsRemarkAuthor`, `IsRemarkAssignee`, `HasUnprocessedRemarks`), action-бины
+(`AssignRemarkToAuthor`, `NotifyRemarkStatusChange` — заглушка); миграция `V24` добавляет
+`RemarkStateMachine` с переходами `CreateRemark`, `StartProcessingRemark`, `ProcessRemark`,
+`RejectRemark` и статусами Draft/Open/InProgress/Processed/Rejected. Обновлён guard
+`AllRemarksProcessedGuard` из фазы 8 для реальной проверки наличия необработанных замечаний.
+
+**Не реализовано** (следующие фазы): `MatchService`/`RouteGeneratorService`/
+`RouteValidatorService` (создание процесса из шаблона), адаптеры (`RoleResolverAdapter`,
+`EntityAdapter`, `KripAdapter`), REST API (`07_api_contract.md`), публикация событий
+(Outbox → RabbitMQ — `TransitionEngine` уже отдаёт `emits` в `TransitionResult`, публикатора
+пока нет), джобы планировщика (автоархивация, напоминания, идемпотентность), тип процесса
+`UNIFIED`, дополнительные согласующие (PHASE-10), уведомления (PHASE-12), реакции на события
+(PHASE-13), авторизация и права доступа (PHASE-14).
 
 Таблицы `idempotency_key`, `outbox_event` и `shedlock` пока не имеют JPA-сущностей —
 `shedlock` управляется самой библиотекой Shedlock, а `idempotency_key`/`outbox_event`

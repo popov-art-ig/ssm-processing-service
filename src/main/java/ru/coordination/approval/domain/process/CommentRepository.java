@@ -9,6 +9,4 @@ public interface CommentRepository extends JpaRepository<Comment, UUID> {
     List<Comment> findByProcessId(UUID processId);
 
     List<Comment> findByProcessIdAndStageId(UUID processId, UUID stageId);
-
-    List<Comment> findByProcessIdAndRemarkId(UUID processId, UUID remarkId);
 }

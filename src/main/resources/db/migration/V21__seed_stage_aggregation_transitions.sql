@@ -31,25 +31,20 @@ where code = 'Decide'
   );
 
 -- state_machine_config + state_config + transition_config (08_db_schema.md §15) — STAGE/STANDARD/v1
--- Используем существующий config (предполагаем, что он был создан в предыдущих фазах)
--- Если config ещё не существует, создаём его
-insert into state_machine_config (id, version, entity_type, process_type, status, active_process_count, created_at, created_by, published_at, published_by, updated_at, version_lock)
-values ('11111111-0006-0000-0000-000000000001', 1, 'STAGE', 'STANDARD', 'PUBLISHED', 0, now(), '00000000-0000-0000-0000-000000000000', now(), '00000000-0000-0000-0000-000000000000', now(), 0)
-on conflict (entity_type, process_type, version) do nothing;
-
+-- Используем существующий config, созданный в V19
 -- state_config для новых статусов
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)
 values
-    ('11111111-0006-0000-0000-000000000002', '11111111-0006-0000-0000-000000000001', 'Approved', 'Согласован', false, false, '{}', now()),
-    ('11111111-0006-0000-0000-000000000003', '11111111-0006-0000-0000-000000000001', 'ApprovedWithComments', 'Согласован с замечаниями', false, false, '{}', now()),
-    ('11111111-0006-0000-0000-000000000004', '11111111-0006-0000-0000-000000000001', 'OnRework', 'На доработку', false, false, '{}', now())
+    ('11111111-0006-0000-0000-000000000002', '11111111-0004-0000-0000-000000000001', 'Approved', 'Согласован', false, false, '{}', now()),
+    ('11111111-0006-0000-0000-000000000003', '11111111-0004-0000-0000-000000000001', 'ApprovedWithComments', 'Согласован с замечаниями', false, false, '{}', now()),
+    ('11111111-0006-0000-0000-000000000004', '11111111-0004-0000-0000-000000000001', 'OnRework', 'На доработку', false, false, '{}', now())
 on conflict do nothing;
 
 -- transition_config — три новых перехода для закрытия этапа
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
-        '11111111-0006-0000-0000-000000000005', '11111111-0006-0000-0000-000000000001',
+        '11111111-0006-0000-0000-000000000005', '11111111-0004-0000-0000-000000000001',
         'StageApproved', 'Active', 'Approved', 'SYSTEM_ACTION',
         '{AllParticipantsDecided,AggregationApproved}',
         '{}',
@@ -57,7 +52,7 @@ values
         0, true, now()
     ),
     (
-        '11111111-0006-0000-0000-000000000006', '11111111-0006-0000-0000-000000000001',
+        '11111111-0006-0000-0000-000000000006', '11111111-0004-0000-0000-000000000001',
         'StageApprovedWithComments', 'Active', 'ApprovedWithComments', 'SYSTEM_ACTION',
         '{AllParticipantsDecided,AggregationApprovedWithComments}',
         '{}',
@@ -65,7 +60,7 @@ values
         0, true, now()
     ),
     (
-        '11111111-0006-0000-0000-000000000007', '11111111-0006-0000-0000-000000000001',
+        '11111111-0006-0000-0000-000000000007', '11111111-0004-0000-0000-000000000001',
         'StageOnRework', 'Active', 'OnRework', 'SYSTEM_ACTION',
         '{AllParticipantsDecided,AggregationRework}',
         '{}',

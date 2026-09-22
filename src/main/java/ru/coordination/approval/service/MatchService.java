@@ -60,7 +60,7 @@ public class MatchService {
 
     private boolean ruleMatches(ApplicabilityRule rule, EntitySnapshot snapshot) {
         // Check entity type
-        if (rule.getEntityTypes() != null && rule.getEntityTypes().length > 0) {
+        if (rule.getEntityTypes() != null && !rule.getEntityTypes().isEmpty()) {
             boolean typeMatches = false;
             for (String type : rule.getEntityTypes()) {
                 if (type.equals(snapshot.entityType())) {
@@ -74,7 +74,7 @@ public class MatchService {
         }
 
         // Check entity subtype
-        if (rule.getEntitySubtypes() != null && rule.getEntitySubtypes().length > 0) {
+        if (rule.getEntitySubtypes() != null && !rule.getEntitySubtypes().isEmpty()) {
             if (snapshot.entitySubtype() == null) {
                 return false;
             }

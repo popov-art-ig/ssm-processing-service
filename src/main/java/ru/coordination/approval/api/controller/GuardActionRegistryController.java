@@ -12,8 +12,8 @@ import ru.coordination.approval.api.dto.registry.ActionRegistryDto;
 import ru.coordination.approval.api.dto.registry.GuardRegistryDto;
 import ru.coordination.approval.domain.registry.ActionRegistryEntry;
 import ru.coordination.approval.domain.registry.GuardRegistryEntry;
-import ru.coordination.approval.engine.ActionRegistryRepository;
-import ru.coordination.approval.engine.GuardRegistryRepository;
+import ru.coordination.approval.engine.registry.ActionRegistryRepository;
+import ru.coordination.approval.engine.registry.GuardRegistryRepository;
 
 @RestController
 @RequestMapping("/api/v1/admin/registry")

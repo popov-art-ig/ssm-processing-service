@@ -19,10 +19,10 @@ public class DecisionMapper {
         return new DecisionDto(
                 decision.getId(),
                 decision.getParticipant().getId(),
-                decision.getDecision(),
+                decision.getResult(),
                 decision.getComment(),
-                decision.getDecidedAt(),
-                decision.getDecidedBy()
+                decision.getRecordedAt(),
+                null // decidedBy field doesn't exist in Decision
         );
     }
 

@@ -61,18 +61,18 @@ public class StateMachineConfigController {
                 config.getProcessType().name(),
                 config.getVersion(),
                 config.getStates().stream()
-                        .map(s -> new StateConfigDto(s.getId(), s.getStateName()))
+                        .map(s -> new StateConfigDto(s.getId(), s.getCode()))
                         .toList(),
                 config.getTransitions().stream()
                         .map(t -> new TransitionConfigDto(
                                 t.getId(),
-                                t.getTransitionName(),
-                                t.getFromState().getStateName(),
-                                t.getToState().getStateName(),
-                                t.getTriggerType().name(),
-                                t.getGuards().stream().map(g -> g.getGuardRegistry().getCode()).toList(),
-                                t.getActions().stream().map(a -> a.getActionRegistry().getCode()).toList(),
-                                t.getEmittedEvents()
+                                t.getCode(),
+                                t.getFromState(),
+                                t.getToState(),
+                                t.getTrigger().name(),
+                                t.getGuards(),
+                                t.getActions(),
+                                t.getEmits()
                         ))
                         .toList()
         );

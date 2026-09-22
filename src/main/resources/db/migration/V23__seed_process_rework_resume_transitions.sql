@@ -21,7 +21,8 @@ values
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('OnRework', 'PROCESS', 'На доработке', false, true, now(), now()),
-    ('Rejected', 'STAGE', 'Отклонён при возврате', false, true, now(), now());
+    ('Rejected', 'STAGE', 'Отклонён при возврате', false, true, now(), now())
+on conflict (code) do nothing;
 
 -- 4. state_machine_config для PROCESS (создан в V18, переиспользуем)
 -- state_config для новых статусов процесса
@@ -69,7 +70,7 @@ where code = 'StageOnRework'
 -- 8. state_config для STAGE — добавляем статус Rejected
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)
 values
-    ('11111111-0008-0000-0000-000000000004', '11111111-0006-0000-0000-000000000001', 'Rejected', 'Отклонён', false, true, '{}', now())
+    ('11111111-0008-0000-0000-000000000004', '11111111-0004-0000-0000-000000000001', 'Rejected', 'Отклонён', false, true, '{}', now())
 on conflict do nothing;
 
 -- 9. transition_config — переход ReactivateStage (OnRework → Active) для этапов
@@ -77,7 +78,7 @@ on conflict do nothing;
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
-        '11111111-0008-0000-0000-000000000005', '11111111-0006-0000-0000-000000000001',
+        '11111111-0008-0000-0000-000000000005', '11111111-0004-0000-0000-000000000001',
         'ReactivateStage', 'OnRework', 'Active', 'SYSTEM_ACTION',
         '{AllMandatorySlotsFilled,AllDurationsValid}',
         '{AssignStageTasks}',

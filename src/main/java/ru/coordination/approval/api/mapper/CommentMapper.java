@@ -12,7 +12,7 @@ public class CommentMapper {
                 comment.getId(),
                 comment.getProcess().getId(),
                 comment.getStage() != null ? comment.getStage().getId() : null,
-                comment.getRemark() != null ? comment.getRemark().getId() : null,
+                null, // Comment doesn't have a remark relation
                 comment.getText(),
                 comment.getAuthorId(),
                 comment.getCreatedAt()

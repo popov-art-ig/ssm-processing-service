@@ -22,7 +22,7 @@ public class TemplateMapper {
                 template.getStatus().name(),
                 template.getVersion(),
                 template.getParentTemplateId(),
-                template.getProcessIterationEnabled(),
+                template.isProcessIterationEnabled(),
                 template.getPublishedAt(),
                 template.getStages().stream()
                         .map(this::toStageTemplateDto)
@@ -43,8 +43,8 @@ public class TemplateMapper {
                 stage.getDuration(),
                 stage.getDecisionMode() != null ? stage.getDecisionMode().name() : null,
                 stage.getExecutionOrder() != null ? stage.getExecutionOrder().name() : null,
-                stage.getIsMandatory(),
-                stage.getIsOrderMandatory(),
+                stage.isMandatory(),
+                stage.isOrderMandatory(),
                 stage.getAllowedReturnStages(),
                 stage.getActorSlots().stream()
                         .map(this::toSlotTemplateDto)
@@ -59,10 +59,10 @@ public class TemplateMapper {
                 slot.getUserId(),
                 slot.getOrganizationId(),
                 slot.getAcceptableRoles(),
-                slot.getRequired(),
-                slot.getIsUserEditable(),
-                slot.getIsOrganizationEditable(),
-                slot.getIsDeletable()
+                slot.isRequired(),
+                slot.isUserEditable(),
+                slot.isOrganizationEditable(),
+                slot.isDeletable()
         );
     }
 

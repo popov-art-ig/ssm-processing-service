@@ -95,8 +95,8 @@ public class ApprovalViewService {
         List<TaskDto> tasks = participants.getContent().stream()
                 .map(p -> {
                     StageIteration iteration = p.getStageIteration();
-                    StageInstance stage = iteration.getStageInstance();
-                    ProcessInstance process = stage.getProcessInstance();
+                    StageInstance stage = iteration.getStage();
+                    ProcessInstance process = stage.getProcess();
 
                     return new TaskDto(
                             p.getId(),
@@ -106,7 +106,7 @@ public class ApprovalViewService {
                             process.getEntityType(),
                             process.getEntityId(),
                             stage.getName(),
-                            p.getDueDate(),
+                            p.getDueAt(),
                             p.getStatus()
                     );
                 })

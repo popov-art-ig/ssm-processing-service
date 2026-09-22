@@ -37,14 +37,14 @@ public class ProcessMapper {
         );
     }
 
-    private StageDto toStageDto(StageInstance stage) {
+    public StageDto toStageDto(StageInstance stage) {
         return new StageDto(
                 stage.getId(),
                 stage.getOrderIdx(),
                 stage.getName(),
                 stage.getStageType().name(),
                 stage.getStatus(),
-                stage.getDueDate(),
+                stage.getDueAt(),
                 stage.getDuration(),
                 stage.getDecisionMode() != null ? stage.getDecisionMode().name() : null,
                 stage.getIterations().stream()
@@ -53,19 +53,19 @@ public class ProcessMapper {
         );
     }
 
-    private IterationDto toIterationDto(StageIteration iteration) {
+    public IterationDto toIterationDto(StageIteration iteration) {
         return new IterationDto(
                 iteration.getId(),
                 iteration.getIterationIdx(),
                 iteration.getStatus(),
-                iteration.getDueDate(),
+                null, // StageIteration doesn't have dueDate field
                 iteration.getParticipants().stream()
                         .map(this::toParticipantDto)
                         .toList()
         );
     }
 
-    private ParticipantDto toParticipantDto(Participant participant) {
+    public ParticipantDto toParticipantDto(Participant participant) {
         Boolean hasDecision = decisionMapper.hasDecision(participant);
         return new ParticipantDto(
                 participant.getId(),
@@ -73,7 +73,7 @@ public class ProcessMapper {
                 participant.getUserId(),
                 participant.getOrganizationId(),
                 participant.getStatus(),
-                participant.getDueDate(),
+                participant.getDueAt(),
                 hasDecision
         );
     }

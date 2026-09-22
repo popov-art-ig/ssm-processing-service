@@ -13,11 +13,11 @@ public class RemarkMapper {
                 remark.getProcess().getId(),
                 remark.getStage() != null ? remark.getStage().getId() : null,
                 remark.getText(),
-                remark.getSeverity().name(),
+                null, // severity field doesn't exist in Remark
                 remark.getStatus(),
                 remark.getAuthorId(),
                 remark.getCreatedAt(),
-                remark.getResolutionText(),
+                null, // resolutionText field doesn't exist in Remark
                 remark.getResolvedAt()
         );
     }

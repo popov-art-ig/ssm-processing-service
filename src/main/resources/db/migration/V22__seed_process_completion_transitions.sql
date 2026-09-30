@@ -15,23 +15,20 @@ values
     ('EvaluateProcessCompletion', 'Оценить завершение процесса', 'Проверяет все этапы и программно запускает переход процесса (A-S-005)', 'evaluateProcessCompletionAction', 'GLOBAL', '{ORCHESTRATION}', '{STAGE}', true, now(), now());
 
 -- status_registry (08_db_schema.md §5.1) — коды состояний ProcessStateMachine
+-- ON CONFLICT DO NOTHING т.к. Approved и ApprovedWithComments уже добавлены в V21 для STAGE
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('Approved', 'PROCESS', 'Согласован', false, true, now(), now()),
-    ('ApprovedWithComments', 'PROCESS', 'Согласован с замечаниями', false, true, now(), now());
+    ('ApprovedWithComments', 'PROCESS', 'Согласован с замечаниями', false, true, now(), now())
+on conflict (code) do nothing;
 
 -- state_machine_config + state_config + transition_config (08_db_schema.md §15) — PROCESS/STANDARD/v1
--- Используем существующий config (предполагаем, что он был создан в предыдущих фазах)
--- Если config ещё не существует, создаём его
-insert into state_machine_config (id, version, entity_type, process_type, status, active_process_count, created_at, created_by, published_at, published_by, updated_at, version_lock)
-values ('11111111-0007-0000-0000-000000000001', 1, 'PROCESS', 'STANDARD', 'PUBLISHED', 0, now(), '00000000-0000-0000-0000-000000000000', now(), '00000000-0000-0000-0000-000000000000', now(), 0)
-on conflict (entity_type, process_type, version) do nothing;
-
+-- Используем существующий config, созданный в V18
 -- state_config для новых статусов процесса
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)
 values
-    ('11111111-0007-0000-0000-000000000002', '11111111-0007-0000-0000-000000000001', 'Approved', 'Согласован', false, true, '{}', now()),
-    ('11111111-0007-0000-0000-000000000003', '11111111-0007-0000-0000-000000000001', 'ApprovedWithComments', 'Согласован с замечаниями', false, true, '{}', now())
+    ('11111111-0007-0000-0000-000000000002', '11111111-0003-0000-0000-000000000001', 'Approved', 'Согласован', false, true, '{}', now()),
+    ('11111111-0007-0000-0000-000000000003', '11111111-0003-0000-0000-000000000001', 'ApprovedWithComments', 'Согласован с замечаниями', false, true, '{}', now())
 on conflict do nothing;
 
 -- transition_config — переходы для завершения процесса
@@ -40,7 +37,7 @@ on conflict do nothing;
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
-        '11111111-0007-0000-0000-000000000004', '11111111-0007-0000-0000-000000000001',
+        '11111111-0007-0000-0000-000000000004', '11111111-0003-0000-0000-000000000001',
         'ProcessApprovedWithComments', 'InProgress', 'ApprovedWithComments', 'SYSTEM_ACTION',
         '{AllStagesCompleted,HasComments}',
         '{CompleteProcess}',
@@ -48,7 +45,7 @@ values
         0, true, now()
     ),
     (
-        '11111111-0007-0000-0000-000000000005', '11111111-0007-0000-0000-000000000001',
+        '11111111-0007-0000-0000-000000000005', '11111111-0003-0000-0000-000000000001',
         'ProcessApproved', 'InProgress', 'Approved', 'SYSTEM_ACTION',
         '{AllStagesCompleted}',
         '{CompleteProcess}',

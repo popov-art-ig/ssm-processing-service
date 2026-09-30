@@ -1,0 +1,553 @@
+{
+  "info": {
+    "name": "Approval Service API",
+    "description": "REST API для системы согласования документов и процессов",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "approval-service-api-v1"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "adminId",
+      "value": "{{$guid}}",
+      "type": "string"
+    },
+    {
+      "key": "initiatorId",
+      "value": "{{$guid}}",
+      "type": "string"
+    },
+    {
+      "key": "approverId",
+      "value": "{{$guid}}",
+      "type": "string"
+    },
+    {
+      "key": "processId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "templateId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "stageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "participantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "remarkId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Setup",
+      "item": [
+        {
+          "name": "Create Template",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('templateId', response.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Contract Approval Template\",\n  \"processType\": \"STANDARD\",\n  \"processIterationEnabled\": false,\n  \"responsibleRoles\": [],\n  \"requiresResponsibleApproval\": false,\n  \"stages\": [\n    {\n      \"orderIdx\": 1,\n      \"name\": \"Legal Review\",\n      \"description\": \"Legal department review\",\n      \"stageType\": \"APPROVAL\",\n      \"duration\": 3,\n      \"decisionMode\": \"AND\",\n      \"executionOrder\": \"PARALLEL\",\n      \"isMandatory\": true,\n      \"isOrderMandatory\": true,\n      \"allowedReturnStages\": [],\n      \"actorSlots\": [\n        {\n          \"orderIdx\": 1,\n          \"userId\": \"{{approverId}}\",\n          \"organizationId\": null,\n          \"acceptableRoles\": [],\n          \"required\": true,\n          \"isUserEditable\": false,\n          \"isOrganizationEditable\": false,\n          \"isDeletable\": false\n        }\n      ]\n    }\n  ],\n  \"applicabilityRules\": [\n    {\n      \"ruleIdx\": 1,\n      \"entityTypes\": [\"CONTRACT\"],\n      \"entitySubtypes\": [],\n      \"attributeConditions\": {\n        \"amount\": { \"$gte\": 1000000 }\n      }\n    }\n  ],\n  \"createdBy\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/templates",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "templates"]
+            }
+          }
+        },
+        {
+          "name": "Publish Template",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.collectionVariables.get('templateId')) {",
+                  "    throw new Error('templateId is not set. Run Create Template first.');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actorId\": \"{{adminId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/templates/{{templateId}}/publish",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "templates", "{{templateId}}", "publish"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Happy Path",
+      "item": [
+        {
+          "name": "Create Process",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('processId', response.id);",
+                  "    if (response.stages && response.stages.length > 0) {",
+                  "        pm.collectionVariables.set('stageId', response.stages[0].id);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"entityType\": \"CONTRACT\",\n  \"entitySubtype\": null,\n  \"entityId\": \"{{$guid}}\",\n  \"attributes\": {\n    \"amount\": 1500000,\n    \"contractNumber\": \"CT-2024-001\"\n  },\n  \"initiatorId\": \"{{initiatorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes"]
+            }
+          }
+        },
+        {
+          "name": "Get Process",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}"]
+            }
+          }
+        },
+        {
+          "name": "Start Process",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.stages && response.stages.length > 0) {",
+                  "        const stage = response.stages[0];",
+                  "        if (stage.iterations && stage.iterations.length > 0) {",
+                  "            const iteration = stage.iterations[0];",
+                  "            if (iteration.participants && iteration.participants.length > 0) {",
+                  "                pm.collectionVariables.set('participantId', iteration.participants[0].id);",
+                  "            }",
+                  "        }",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actorId\": \"{{initiatorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "start"]
+            }
+          }
+        },
+        {
+          "name": "Make Decision - Approve",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"APPROVE\",\n  \"comment\": \"Looks good to me\",\n  \"actorId\": \"{{approverId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/stages/{{stageId}}/participants/{{participantId}}/decide",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "stages", "{{stageId}}", "participants", "{{participantId}}", "decide"]
+            }
+          }
+        },
+        {
+          "name": "List All Decisions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/decisions",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "decisions"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Rework Path",
+      "item": [
+        {
+          "name": "Make Decision - Reject",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decision\": \"REJECT\",\n  \"comment\": \"Needs revision\",\n  \"actorId\": \"{{approverId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/stages/{{stageId}}/participants/{{participantId}}/decide",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "stages", "{{stageId}}", "participants", "{{participantId}}", "decide"]
+            }
+          }
+        },
+        {
+          "name": "Resume Process",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetStageId\": \"{{stageId}}\",\n  \"actorId\": \"{{initiatorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "resume"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Remarks",
+      "item": [
+        {
+          "name": "Create Remark",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const response = pm.response.json();",
+                  "    pm.collectionVariables.set('remarkId', response.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stageId\": \"{{stageId}}\",\n  \"text\": \"Contract clause 3.2 needs clarification\",\n  \"severity\": \"MAJOR\",\n  \"authorId\": \"{{approverId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/remarks",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "remarks"]
+            }
+          }
+        },
+        {
+          "name": "Resolve Remark",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"resolutionText\": \"Clause 3.2 has been updated with clarification\",\n  \"actorId\": \"{{initiatorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/remarks/{{remarkId}}/resolve",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "remarks", "{{remarkId}}", "resolve"]
+            }
+          }
+        },
+        {
+          "name": "Accept Remark",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"actorId\": \"{{approverId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/remarks/{{remarkId}}/accept",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "remarks", "{{remarkId}}", "accept"]
+            }
+          }
+        },
+        {
+          "name": "List Remarks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/remarks",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "remarks"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Comments",
+      "item": [
+        {
+          "name": "Create Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stageId\": \"{{stageId}}\",\n  \"remarkId\": null,\n  \"text\": \"This stage looks good overall\",\n  \"authorId\": \"{{approverId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "comments"]
+            }
+          }
+        },
+        {
+          "name": "List Comments",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/processes/{{processId}}/comments",
+              "host": ["{{baseUrl}}"],
+              "path": ["processes", "{{processId}}", "comments"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Aggregated Views",
+      "item": [
+        {
+          "name": "Get Approval View",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approval-view/entities/{{processId}}?entityType=CONTRACT",
+              "host": ["{{baseUrl}}"],
+              "path": ["approval-view", "entities", "{{processId}}"],
+              "query": [
+                {
+                  "key": "entityType",
+                  "value": "CONTRACT"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Tasks",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approval-view/tasks/my?userId={{approverId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["approval-view", "tasks", "my"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{approverId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get My Processes",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/approval-view/processes/my?userId={{initiatorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["approval-view", "processes", "my"],
+              "query": [
+                {
+                  "key": "userId",
+                  "value": "{{initiatorId}}"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Templates",
+      "item": [
+        {
+          "name": "List Templates",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/templates",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "templates"]
+            }
+          }
+        },
+        {
+          "name": "Get Template",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/templates/{{templateId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "templates", "{{templateId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Admin",
+      "item": [
+        {
+          "name": "List State Machine Configs",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/state-machines",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "state-machines"]
+            }
+          }
+        },
+        {
+          "name": "List Guards",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/registry/guards",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "registry", "guards"]
+            }
+          }
+        },
+        {
+          "name": "List Actions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/registry/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "registry", "actions"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

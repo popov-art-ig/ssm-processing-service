@@ -17,18 +17,21 @@ values
     ('NotifyRemarkStatusChange', 'Уведомление об изменении статуса', 'A-R-002: Публикация события об изменении статуса замечания (PHASE-11: заглушка)', 'notifyRemarkStatusChangeAction', 'GLOBAL', '{NOTIFICATION}', '{REMARK}', true, now(), now());
 
 -- 3. status_registry — коды состояний для замечаний
+-- Draft/InProgress уже существуют для других entity_type, поэтому ON CONFLICT DO NOTHING
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('Draft', 'REMARK', 'Черновик', false, true, now(), now()),
     ('Open', 'REMARK', 'Открыто', false, true, now(), now()),
     ('InProgress', 'REMARK', 'В обработке', false, true, now(), now()),
     ('Processed', 'REMARK', 'Обработано', true, true, now(), now()),
-    ('Rejected', 'REMARK', 'Отклонено', true, true, now(), now());
+    ('Rejected', 'REMARK', 'Отклонено', true, true, now(), now())
+on conflict (code) do nothing;
 
 -- 4. state_machine_config для REMARK
-insert into state_machine_config (id, entity_type, process_type, version, lifecycle_status, created_by, created_at, updated_by, updated_at, config_version)
+insert into state_machine_config (id, entity_type, process_type, version, status, active_process_count, created_by, created_at, published_at, published_by, updated_at, version_lock)
 values
-    ('11111111-0011-0000-0000-000000000001', 'REMARK', 'STANDARD', 1, 'PUBLISHED', '00000000-0000-0000-0000-000000000000', now(), '00000000-0000-0000-0000-000000000000', now(), 0);
+    ('11111111-0011-0000-0000-000000000001', 'REMARK', 'STANDARD', 1, 'PUBLISHED', 0, '00000000-0000-0000-0000-000000000000', now(), now(), '00000000-0000-0000-0000-000000000000', now(), 0)
+on conflict (entity_type, process_type, version) do nothing;
 
 -- 5. state_config для REMARK
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)

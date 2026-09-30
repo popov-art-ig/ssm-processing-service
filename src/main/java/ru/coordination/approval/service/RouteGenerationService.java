@@ -81,10 +81,11 @@ public class RouteGenerationService {
         ProcessInstance process = ProcessInstance.builder()
                 .entityType(request.entityType())
                 .entityId(request.entityId())
-                .templateId(template.getId())
+                .templateRef(template.getId())
+                .processType(template.getProcessType())
+                .configVersion(1)
                 .status("Pending")
-                .organizationId(request.organizationId())
-                .createdBy(request.initiatorId())
+                .initiatorId(request.initiatorId())
                 .createdAt(now)
                 .stages(new ArrayList<>())
                 .build();
@@ -97,6 +98,7 @@ public class RouteGenerationService {
             StageInstance stage = StageInstance.builder()
                     .process(process)
                     .orderIdx(stageTemplate.getOrderIdx())
+                    .originalOrderIdx(stageTemplate.getOrderIdx())
                     .stageType(stageTemplate.getStageType())
                     .duration(stageTemplate.getDuration())
                     .executionOrder(stageTemplate.getExecutionOrder())
@@ -104,7 +106,7 @@ public class RouteGenerationService {
                             ? stageTemplate.getDecisionMode()
                             : DecisionMode.AND)
                     .status("Pending")
-                    .dueDate(currentDueDate)
+                    .dueAt(currentDueDate)
                     .createdAt(now)
                     .iterations(new ArrayList<>())
                     .build();
@@ -168,16 +170,17 @@ public class RouteGenerationService {
             RouteGenerationRequest request,
             EntitySnapshot entitySnapshot
     ) {
-        if (slot.getRoleId() != null) {
-            // Resolve via RoleResolverAdapter
+        if (!slot.getAcceptableRoles().isEmpty()) {
+            // Resolve via RoleResolverAdapter using first acceptable role
+            UUID roleId = slot.getAcceptableRoles().get(0);
             return roleResolverAdapter.resolveRole(
-                    slot.getRoleId(),
+                    roleId,
                     request.organizationId(),
                     entitySnapshot
             );
-        } else if (slot.getFixedUserId() != null) {
+        } else if (slot.getUserId() != null) {
             // Fixed user
-            return List.of(slot.getFixedUserId());
+            return List.of(slot.getUserId());
         } else {
             // Empty slot (will be resolved later or filled manually)
             return List.of();
@@ -187,8 +190,7 @@ public class RouteGenerationService {
     private ParticipantRole mapSlotTypeToRole(SlotType slotType) {
         return switch (slotType) {
             case ACTOR -> ParticipantRole.APPROVER;
-            case OBSERVER -> ParticipantRole.OBSERVER;
-            case SECRETARY -> ParticipantRole.SECRETARY;
+            case ADDITIONAL_APPROVER -> ParticipantRole.ADDITIONAL_APPROVER;
         };
     }
 }

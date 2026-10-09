@@ -3,7 +3,7 @@ package ru.coordination.approval.adapter;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
-import ru.coordination.approval.dto.EntitySnapshot;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
 
 @Component
 public class RoleResolverAdapterStub implements RoleResolverAdapter {

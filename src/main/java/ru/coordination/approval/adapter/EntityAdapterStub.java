@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
-import ru.coordination.approval.dto.EntitySnapshot;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
 
 @Component
 public class EntityAdapterStub implements EntityAdapter {

@@ -147,12 +147,15 @@ class ProcessServiceIntegrationTest {
     }
 
     @Test
-    void repeatedStartThrowsNoApplicableTransition() {
+    void repeatedStartThrowsIllegalState() {
         UUID initiatorId = UUID.randomUUID();
         ProcessFixture fixture = persistProcess(initiatorId, new StageSpec(true, 3, 1, ExecutionOrderSpec.PARALLEL));
         processService.startProcess(fixture.process().getId(), initiatorId);
 
-        assertThrows(NoApplicableTransitionException.class,
+        // Явная проверка статуса в ProcessService.startProcess: повторный запуск — ошибка
+        // состояния, а не молчаливый notPerformed (из InProgress переход по USER_ACTION
+        // существует — ProcessRework, поэтому NoApplicableTransitionException не бросался).
+        assertThrows(IllegalStateException.class,
                 () -> processService.startProcess(fixture.process().getId(), initiatorId));
     }
 

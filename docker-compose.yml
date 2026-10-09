@@ -1,6 +1,11 @@
 # Локальное окружение для разработки/Фазы 1.
-# По умолчанию application.yml ожидает именно эти хосты/креды (localhost:5432, localhost:5672).
-version: '3.8'
+# Postgres публикуется на хосте как 5433: порт 5432 занят нативным PostgreSQL (служба
+# postgresql-x64-18), и подключения к localhost:5432 уходят в него, а не в контейнер.
+# Параметры для внешних клиентов (DBeaver, psql, приложение вне Docker):
+#   host=localhost, port=5433, database=coordination, user=coordination, password=coordination
+#   DB_URL=jdbc:postgresql://localhost:5433/coordination
+# Внутри docker-сети приложение по-прежнему ходит на postgres:5432.
+# RabbitMQ доступен на localhost:5672 (AMQP) и localhost:15672 (UI).
 
 services:
   postgres:
@@ -10,7 +15,8 @@ services:
       POSTGRES_USER: coordination
       POSTGRES_PASSWORD: coordination
     ports:
-      - "5432:5432"
+      # Наружу — 5433, чтобы не конфликтовать с нативным PostgreSQL 18 на 5432.
+      - "5433:5432"
     volumes:
       - coordination-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -34,6 +40,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: ssm-processing-service:local
     ports:
       - "8080:8080"
     environment:

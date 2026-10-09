@@ -33,8 +33,8 @@ import ru.coordination.approval.domain.template.SlotType;
 import ru.coordination.approval.domain.template.StageTemplate;
 import ru.coordination.approval.domain.template.Template;
 import ru.coordination.approval.domain.template.TemplateRepository;
-import ru.coordination.approval.dto.EntitySnapshot;
-import ru.coordination.approval.dto.RouteGenerationRequest;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
+import ru.coordination.approval.dto.generation.RouteGenerationRequest;
 import ru.coordination.approval.exception.TemplateNotFoundException;
 
 @ExtendWith(MockitoExtension.class)
@@ -113,8 +113,8 @@ class RouteGenerationServiceTest {
 
         assertThat(result.getEntityType()).isEqualTo("CONTRACT");
         assertThat(result.getEntityId()).isEqualTo(entityId);
-        assertThat(result.getTemplateId()).isEqualTo(templateId);
-        assertThat(result.getStatus()).isEqualTo("Pending");
+        assertThat(result.getTemplateRef()).isEqualTo(template.getId());
+        assertThat(result.getStatus()).isEqualTo("Draft");
         assertThat(result.getStages()).hasSize(2);
 
         // Check first stage
@@ -124,7 +124,9 @@ class RouteGenerationServiceTest {
         assertThat(result.getStages().get(0).getIterations().get(0).getParticipants())
                 .hasSize(2);
 
-        verify(routeValidatorService).validate(any(ProcessInstance.class));
+        // Сверка обязательных слотов идёт по этапам шаблона, поэтому validate вызывается с двумя
+        // аргументами (ProcessInstance + этапы шаблона).
+        verify(routeValidatorService).validate(any(ProcessInstance.class), any());
         verify(processRepository).save(any(ProcessInstance.class));
     }
 
@@ -167,7 +169,7 @@ class RouteGenerationServiceTest {
 
         ProcessInstance result = routeGenerationService.generateRoute(request);
 
-        assertThat(result.getTemplateId()).isEqualTo(template.getId());
+        assertThat(result.getTemplateRef()).isEqualTo(template.getId());
         verify(matchService).findMatchingTemplates(snapshot);
         verify(matchService).selectBestTemplate(List.of(template));
     }
@@ -297,7 +299,7 @@ class RouteGenerationServiceTest {
                 .slotType(SlotType.ACTOR)
                 .orderIdx(1)
                 .required(true)
-                .fixedUserId(userId)
+                .userId(userId)
                 .createdAt(Instant.now())
                 .children(new ArrayList<>())
                 .build();
@@ -350,7 +352,7 @@ class RouteGenerationServiceTest {
                     .slotType(SlotType.ACTOR)
                     .orderIdx(1)
                     .required(true)
-                    .roleId(roleId)
+                    .acceptableRoles(new ArrayList<>(List.of(roleId)))
                     .createdAt(Instant.now())
                     .children(new ArrayList<>())
                     .build();
@@ -394,7 +396,7 @@ class RouteGenerationServiceTest {
                 .slotType(SlotType.ACTOR)
                 .orderIdx(1)
                 .required(true)
-                .fixedUserId(fixedUserId)
+                .userId(fixedUserId)
                 .createdAt(Instant.now())
                 .children(new ArrayList<>())
                 .build();

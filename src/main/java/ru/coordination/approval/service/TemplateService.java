@@ -1,5 +1,6 @@
 package ru.coordination.approval.service;
 
+import jakarta.persistence.EntityManager;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +43,7 @@ public class TemplateService {
     private final TemplateRepository templateRepository;
     private final TransitionEngine transitionEngine;
     private final StateMachineConfigRepository configRepository;
+    private final EntityManager entityManager;
 
     public Template create(TemplateCreateRequest request) {
         Instant now = Instant.now();
@@ -87,8 +89,15 @@ public class TemplateService {
         template.setRequiresResponsibleApproval(Boolean.TRUE.equals(request.requiresResponsibleApproval()));
         template.setUpdatedAt(Instant.now());
 
+        // Очистка с последующим flush: Hibernate по умолчанию выполняет INSERT раньше DELETE, и без
+        // принудительного сброса новые этапы вставлялись до удаления старых, падая на уникальном
+        // ключе stage_template (template_id, order_idx) — «duplicate key value violates unique
+        // constraint ux_stage_template_order». После flush удаление уходит в БД первым, и
+        // пересоздание структуры проходит.
         template.getStages().clear();
         template.getApplicabilityRules().clear();
+        entityManager.flush();
+
         applyStages(template, request.stages());
         applyApplicabilityRules(template, request.applicabilityRules());
 
@@ -128,21 +137,125 @@ public class TemplateService {
         return saved;
     }
 
+    /**
+     * Форк шаблона ({@code 07_api_contract.md} §10.6, ADR-023): новая строка {@code Template} с
+     * {@code version + 1} и {@code parentTemplateId = templateId}, в статусе {@code DRAFT}.
+     *
+     * <p>Копируются структура ({@code stages} → {@code actorSlots}) и правила применимости.
+     * Исходный шаблон остаётся как есть — в отличие от {@link #update} опубликованного шаблона,
+     * форк не снимает его с публикации: снятие выполняет Fork &amp; Drain, когда новая версия
+     * будет опубликована.
+     *
+     * @param actorId кто выполняет форк; при {@code null} берётся {@code createdBy} оригинала
+     */
+    public Template fork(UUID templateId, UUID actorId) {
+        Template source = templateRepository.findById(templateId)
+                .orElseThrow(() -> new IllegalArgumentException("Template not found: " + templateId));
+
+        Instant now = Instant.now();
+
+        Template forked = Template.builder()
+                .id(UUID.randomUUID())
+                .name(source.getName())
+                .processType(source.getProcessType())
+                .status(LifecycleStatus.DRAFT)
+                .version(source.getVersion() + 1)
+                .parentTemplateId(source.getId())
+                .processIterationEnabled(source.isProcessIterationEnabled())
+                .responsibleRoles(source.getResponsibleRoles() == null
+                        ? null
+                        : new ArrayList<>(source.getResponsibleRoles()))
+                .requiresResponsibleApproval(source.isRequiresResponsibleApproval())
+                .createdAt(now)
+                .createdBy(actorId != null ? actorId : source.getCreatedBy())
+                .updatedAt(now)
+                .stages(new ArrayList<>())
+                .applicabilityRules(new ArrayList<>())
+                .build();
+
+        // Копируем структуру через applyStages/applyApplicabilityRules: они пересоздают строки
+        // с новыми id и ссылками на новую версию (stage_template.template_id указывает на
+        // конкретную версию, поэтому переиспользовать дочерние строки нельзя — ADR-023).
+        applyStages(forked, toStageDtos(source.getStages()));
+        applyApplicabilityRules(forked, toRuleDtos(source.getApplicabilityRules()));
+
+        return templateRepository.save(forked);
+    }
+
+    private List<StageTemplateDto> toStageDtos(List<StageTemplate> stages) {
+        return stages.stream()
+                .map(stage -> new StageTemplateDto(
+                        stage.getOrderIdx(),
+                        stage.getName(),
+                        stage.getDescription(),
+                        stage.getStageType(),
+                        stage.getDuration(),
+                        stage.getDecisionMode(),
+                        stage.getExecutionOrder(),
+                        stage.isMandatory(),
+                        stage.isOrderMandatory(),
+                        stage.getAllowedReturnStages() == null
+                                ? null
+                                : new ArrayList<>(stage.getAllowedReturnStages()),
+                        stage.getActorSlots().stream()
+                                .map(slot -> new SlotTemplateDto(
+                                        slot.getOrderIdx(),
+                                        slot.getUserId(),
+                                        slot.getOrganizationId(),
+                                        slot.getAcceptableRoles() == null
+                                                ? null
+                                                : new ArrayList<>(slot.getAcceptableRoles()),
+                                        slot.isRequired(),
+                                        slot.isUserEditable(),
+                                        slot.isOrganizationEditable(),
+                                        slot.isDeletable()))
+                                .toList()))
+                .toList();
+    }
+
+    private List<ApplicabilityRuleDto> toRuleDtos(List<ApplicabilityRule> rules) {
+        return rules.stream()
+                .map(rule -> new ApplicabilityRuleDto(
+                        rule.getRuleIdx(),
+                        rule.getEntityTypes() == null ? null : new ArrayList<>(rule.getEntityTypes()),
+                        rule.getEntitySubtypes() == null ? null : new ArrayList<>(rule.getEntitySubtypes()),
+                        rule.getAttributeConditions()))
+                .toList();
+    }
+
+    /**
+     * Публикация шаблона: {@code DRAFT -> PUBLISHED}.
+     *
+     * <p>Предусловие по статусу проверяется явно. Без него {@code publish} на уже опубликованном
+     * шаблоне не падал: движок выбирает переход по ТЕКУЩЕМУ состоянию, а из {@code PUBLISHED} по
+     * {@code USER_ACTION} доступна депрекация — и вызов «опубликовать» молча снимал шаблон с
+     * публикации. Та же защита, что в {@code ProcessService.startProcess}/{@code resume}.
+     */
     public TransitionResult publish(UUID templateId, UUID actorId) {
-        return executeTransition(templateId, actorId);
+        return executeTransition(templateId, actorId, LifecycleStatus.DRAFT, "publish");
     }
 
+    /** Депрекация шаблона: {@code PUBLISHED -> DEPRECATED} (Fork &amp; Drain). */
     public TransitionResult deprecate(UUID templateId, UUID actorId) {
-        return executeTransition(templateId, actorId);
+        return executeTransition(templateId, actorId, LifecycleStatus.PUBLISHED, "deprecate");
     }
 
+    /** Архивирование шаблона: {@code DEPRECATED -> ARCHIVED}. */
     public TransitionResult archive(UUID templateId, UUID actorId) {
-        return executeTransition(templateId, actorId);
+        return executeTransition(templateId, actorId, LifecycleStatus.DEPRECATED, "archive");
     }
 
-    private TransitionResult executeTransition(UUID templateId, UUID actorId) {
+    private TransitionResult executeTransition(
+            UUID templateId, UUID actorId, LifecycleStatus requiredStatus, String operation) {
+
         Template template = templateRepository.findById(templateId)
                 .orElseThrow(() -> new IllegalArgumentException("Template not found: " + templateId));
+
+        if (template.getStatus() != requiredStatus) {
+            throw new IllegalStateException(
+                    "Cannot %s template %s: expected status %s but was %s"
+                            .formatted(operation, templateId, requiredStatus, template.getStatus()));
+        }
 
         StateMachineConfig config = configRepository
                 .findByEntityTypeAndProcessTypeAndVersion(EntityType.TEMPLATE, null, 1)
@@ -175,6 +288,11 @@ public class TemplateService {
 
         Instant now = Instant.now();
         for (StageTemplateDto stageDto : stageDtos) {
+            // Проверка до записи: БД ловит duration <= 0 констрейнтом stage_template_duration_check,
+            // и клиент получал бы 500 (DataIntegrityViolationException) вместо 400 с указанием
+            // проблемы. allowedReturnStages > orderIdx констрейнтом не покрыт вовсе.
+            validateStageForPersist(stageDto);
+
             StageTemplate stage = StageTemplate.builder()
                     .id(UUID.randomUUID())
                     .template(template)
@@ -194,6 +312,30 @@ public class TemplateService {
 
             applySlots(stage, stageDto.actorSlots());
             template.getStages().add(stage);
+        }
+    }
+
+    private void validateStageForPersist(StageTemplateDto stage) {
+        // Имя необязательно (03_domain_model.md §6.4), поэтому в сообщении используется orderIdx —
+        // иначе клиент видел бы «Stage 'null'».
+        String label = stage.name() != null && !stage.name().isBlank()
+                ? "Stage '%s' (orderIdx=%s)".formatted(stage.name(), stage.orderIdx())
+                : "Stage orderIdx=%s".formatted(stage.orderIdx());
+
+        if (stage.duration() != null && stage.duration() <= 0) {
+            throw new IllegalArgumentException(
+                    "%s must have duration > 0 but was %s".formatted(label, stage.duration()));
+        }
+
+        if (stage.allowedReturnStages() != null && stage.orderIdx() != null) {
+            for (Integer returnStageIdx : stage.allowedReturnStages()) {
+                if (returnStageIdx != null && returnStageIdx > stage.orderIdx()) {
+                    throw new IllegalArgumentException(
+                            ("%s allowedReturnStages contains %s which is greater than the stage orderIdx"
+                                    + " (allowedReturnStages may reference only past and current stages)")
+                                    .formatted(label, returnStageIdx));
+                }
+            }
         }
     }
 

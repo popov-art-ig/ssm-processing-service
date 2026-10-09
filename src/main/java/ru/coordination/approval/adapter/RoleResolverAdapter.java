@@ -2,7 +2,7 @@ package ru.coordination.approval.adapter;
 
 import java.util.List;
 import java.util.UUID;
-import ru.coordination.approval.dto.EntitySnapshot;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
 
 public interface RoleResolverAdapter {
     /**

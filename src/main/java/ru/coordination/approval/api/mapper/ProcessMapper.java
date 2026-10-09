@@ -24,7 +24,10 @@ public class ProcessMapper {
                 process.getEntityType(),
                 process.getEntitySubtype(),
                 process.getEntityId(),
-                process.getProcessType().name(),
+                // process_type у ProcessInstance обязателен, но guard оставлен осознанно: раньше
+                // незащищённый .name() на nullable-поле уже давал 500 (карты шаблонов), а цена
+                // проверки нулевая.
+                process.getProcessType() == null ? null : process.getProcessType().name(),
                 process.getStatus(),
                 process.getInitiatorId(),
                 process.getResponsibleUserId(),
@@ -42,7 +45,7 @@ public class ProcessMapper {
                 stage.getId(),
                 stage.getOrderIdx(),
                 stage.getName(),
-                stage.getStageType().name(),
+                stage.getStageType() == null ? null : stage.getStageType().name(),
                 stage.getStatus(),
                 stage.getDueAt(),
                 stage.getDuration(),

@@ -1,4 +1,4 @@
-package ru.coordination.approval.dto;
+package ru.coordination.approval.dto.generation;
 
 import java.util.UUID;
 

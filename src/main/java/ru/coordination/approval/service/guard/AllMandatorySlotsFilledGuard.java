@@ -26,7 +26,11 @@ public class AllMandatorySlotsFilledGuard implements Guard {
 
     @Override
     public boolean evaluate(TransitionContext context) {
-        ProcessInstance process = (ProcessInstance) context.entity();
+        // Guard процессного уровня: при вызове из перехода уровня STAGE возвращаем false,
+        // а не падаем с ClassCastException (так сделано в остальных guards этого пакета).
+        if (!(context.entity() instanceof ProcessInstance process)) {
+            return false;
+        }
         return process.getStages().stream()
                 .filter(StageInstance::isMandatory)
                 .allMatch(this::hasParticipantsInCurrentIteration);

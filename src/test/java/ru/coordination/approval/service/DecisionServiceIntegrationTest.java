@@ -1,6 +1,7 @@
 package ru.coordination.approval.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
@@ -40,6 +41,17 @@ class DecisionServiceIntegrationTest {
 
     @Autowired
     private DecisionService decisionService;
+
+    /**
+     * Тестовый класс работает на одной БД (Testcontainers-контейнер поднимается один раз на
+     * класс, а {@code @Transactional} сервисов коммитит вложенно), поэтому {@code findAll()}
+     * в проверках видел записи предыдущих тестов. Чистим перед каждым тестом.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void clearDecisionAndCommentTables() {
+        commentRepository.deleteAll();
+        decisionRepository.deleteAll();
+    }
 
     @Autowired
     private ProcessService processService;
@@ -218,15 +230,18 @@ class DecisionServiceIntegrationTest {
         participant.setStatus("Pending");
         participantRepository.save(participant);
 
-        TransitionResult result = decisionService.decide(
+        // DecisionService проверяет предусловие явно: решение принимает только участник
+        // в статусе Assigned. Раньше попытка приводила к NoApplicableTransitionException из
+        // недр TransitionEngine (или к тихому notPerformed) вместо внятной ошибки состояния.
+        assertThatThrownBy(() -> decisionService.decide(
                 fixture.processId(),
                 fixture.stageId(),
                 fixture.participantId(),
                 "APPROVE",
                 null,
-                fixture.actorId());
-
-        assertThat(result.performed()).isFalse();
+                fixture.actorId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not assigned");
 
         participant = participantRepository.findById(fixture.participantId()).orElseThrow();
         assertThat(participant.getStatus()).isEqualTo("Pending");

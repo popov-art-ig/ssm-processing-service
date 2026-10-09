@@ -12,29 +12,43 @@ import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ru.coordination.approval.api.dto.decision.DecideRequest;
 import ru.coordination.approval.api.dto.decision.DecisionDto;
+import ru.coordination.approval.api.exception.ErrorResponse;
+import ru.coordination.approval.api.exception.GlobalExceptionHandler;
 import ru.coordination.approval.api.mapper.DecisionMapper;
-import ru.coordination.approval.api.service.DecisionService;
+import ru.coordination.approval.api.service.DecisionQueryService;
 import ru.coordination.approval.domain.process.Decision;
+import ru.coordination.approval.domain.process.Participant;
 
-@WebMvcTest(DecisionController.class)
+/**
+ * Web-срез тестов для решений участников.
+ *
+ * <p>Ранее тест не компилировался: импортировал {@code api.service.DecisionService}
+ * (не существовал), {@code @MockBean} и {@code @WebMvcTest} из удалённых/переехавших в
+ * Spring Boot 4.0 пакетов, а билдер {@link Decision} вызывал несуществующие методы
+ * {@code decision()}/{@code decidedAt()}/{@code decidedBy()} — это поля
+ * {@link Participant}, а не {@link Decision}.
+ */
+@WebMvcTest({DecisionController.class, ProcessDecisionController.class})
+@Import(GlobalExceptionHandler.class)
 class DecisionControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    // Spring Boot 4: срез @WebMvcTest больше не предоставляет Jackson 2 ObjectMapper как бин.
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @MockBean
-    private DecisionService decisionService;
+    @MockitoBean
+    private DecisionQueryService decisionQueryService;
 
-    @MockBean
+    @MockitoBean
     private DecisionMapper decisionMapper;
 
     @Test
@@ -43,16 +57,13 @@ class DecisionControllerTest {
         UUID stageId = UUID.randomUUID();
         UUID participantId = UUID.randomUUID();
 
-        DecideRequest request = new DecideRequest(
-                "APPROVE",
-                "Looks good",
-                UUID.randomUUID()
-        );
+        DecideRequest request = new DecideRequest("APPROVE", "Looks good", UUID.randomUUID());
 
-        Decision mockDecision = createMockDecision(participantId);
-        DecisionDto mockDto = createMockDecisionDto(mockDecision);
+        Decision mockDecision = createMockDecision(participantId, "APPROVE", "Looks good");
+        DecisionDto mockDto = createMockDecisionDto(mockDecision, participantId);
 
-        when(decisionService.decide(eq(processId), eq(stageId), eq(participantId), any(), any(), any()))
+        when(decisionQueryService.decide(
+                eq(processId), eq(stageId), eq(participantId), any(), any(), any()))
                 .thenReturn(mockDecision);
         when(decisionMapper.toDto(mockDecision)).thenReturn(mockDto);
 
@@ -70,11 +81,7 @@ class DecisionControllerTest {
         UUID stageId = UUID.randomUUID();
         UUID participantId = UUID.randomUUID();
 
-        DecideRequest request = new DecideRequest(
-                "",  // пустое решение
-                "Comment",
-                UUID.randomUUID()
-        );
+        DecideRequest request = new DecideRequest("", "Comment", UUID.randomUUID());
 
         mockMvc.perform(post("/api/v1/processes/{processId}/stages/{stageId}/participants/{participantId}/decide",
                         processId, stageId, participantId)
@@ -87,10 +94,10 @@ class DecisionControllerTest {
     void getDecision_success() throws Exception {
         UUID participantId = UUID.randomUUID();
 
-        Decision mockDecision = createMockDecision(participantId);
-        DecisionDto mockDto = createMockDecisionDto(mockDecision);
+        Decision mockDecision = createMockDecision(participantId, "APPROVE", "Looks good");
+        DecisionDto mockDto = createMockDecisionDto(mockDecision, participantId);
 
-        when(decisionService.getByParticipantId(participantId)).thenReturn(mockDecision);
+        when(decisionQueryService.getByParticipantId(participantId)).thenReturn(mockDecision);
         when(decisionMapper.toDto(mockDecision)).thenReturn(mockDto);
 
         mockMvc.perform(get("/api/v1/processes/{processId}/stages/{stageId}/participants/{participantId}/decision",
@@ -102,11 +109,12 @@ class DecisionControllerTest {
     @Test
     void listDecisions_success() throws Exception {
         UUID processId = UUID.randomUUID();
+        UUID participantId = UUID.randomUUID();
 
-        Decision mockDecision = createMockDecision(UUID.randomUUID());
-        DecisionDto mockDto = createMockDecisionDto(mockDecision);
+        Decision mockDecision = createMockDecision(participantId, "APPROVE", "Looks good");
+        DecisionDto mockDto = createMockDecisionDto(mockDecision, participantId);
 
-        when(decisionService.listByProcessId(processId)).thenReturn(List.of(mockDecision));
+        when(decisionQueryService.listByProcessId(processId)).thenReturn(List.of(mockDecision));
         when(decisionMapper.toDto(mockDecision)).thenReturn(mockDto);
 
         mockMvc.perform(get("/api/v1/processes/{processId}/decisions", processId))
@@ -115,24 +123,32 @@ class DecisionControllerTest {
                 .andExpect(jsonPath("$[0].decision").value("APPROVE"));
     }
 
-    private Decision createMockDecision(UUID participantId) {
+    private Decision createMockDecision(UUID participantId, String result, String comment) {
+        Participant participant = Participant.builder()
+                .id(participantId)
+                .userId(UUID.randomUUID())
+                .status("Decided")
+                .build();
+
         return Decision.builder()
                 .id(UUID.randomUUID())
-                .decision("APPROVE")
-                .comment("Looks good")
-                .decidedAt(Instant.now())
-                .decidedBy(UUID.randomUUID())
+                .participant(participant)
+                .result(result)
+                .comment(comment)
+                .auto(false)
+                .recordedAt(Instant.now())
+                .createdAt(Instant.now())
                 .build();
     }
 
-    private DecisionDto createMockDecisionDto(Decision decision) {
+    private DecisionDto createMockDecisionDto(Decision decision, UUID participantId) {
         return new DecisionDto(
                 decision.getId(),
-                UUID.randomUUID(),
-                decision.getDecision(),
+                participantId,
+                decision.getResult(),
                 decision.getComment(),
-                decision.getDecidedAt(),
-                decision.getDecidedBy()
+                decision.getRecordedAt(),
+                null
         );
     }
 }

@@ -14,13 +14,14 @@ values
     ('CompleteProcess', 'Завершить процесс', 'Устанавливает completedAt на процессе (A-P-002)', 'completeProcessAction', 'GLOBAL', '{ORCHESTRATION}', '{PROCESS}', true, now(), now()),
     ('EvaluateProcessCompletion', 'Оценить завершение процесса', 'Проверяет все этапы и программно запускает переход процесса (A-S-005)', 'evaluateProcessCompletionAction', 'GLOBAL', '{ORCHESTRATION}', '{STAGE}', true, now(), now());
 
--- status_registry (08_db_schema.md §5.1) — коды состояний ProcessStateMachine
--- ON CONFLICT DO NOTHING т.к. Approved и ApprovedWithComments уже добавлены в V21 для STAGE
+-- status_registry (08_db_schema.md §5.1) — коды состояний ProcessStateMachine.
+-- PK составной (code, entity_type), поэтому Approved/ApprovedWithComments регистрируются для
+-- PROCESS независимо от одноимённых статусов STAGE из V21 (V1).
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('Approved', 'PROCESS', 'Согласован', false, true, now(), now()),
     ('ApprovedWithComments', 'PROCESS', 'Согласован с замечаниями', false, true, now(), now())
-on conflict (code) do nothing;
+on conflict (code, entity_type) do nothing;
 
 -- state_machine_config + state_config + transition_config (08_db_schema.md §15) — PROCESS/STANDARD/v1
 -- Используем существующий config, созданный в V18
@@ -31,9 +32,13 @@ values
     ('11111111-0007-0000-0000-000000000003', '11111111-0003-0000-0000-000000000001', 'ApprovedWithComments', 'Согласован с замечаниями', false, true, '{}', now())
 on conflict do nothing;
 
--- transition_config — переходы для завершения процесса
--- ВАЖНО: ProcessApprovedWithComments должен быть вставлен РАНЬШЕ ProcessApproved
--- (меньший id), чтобы TransitionEngine проверял его первым (ModelFactory сортирует по code при равном priority)
+-- transition_config — переходы для завершения процесса.
+--
+-- priority = 10 у ProcessApprovedWithComments: ModelFactory сортирует кандидатов по priority
+-- (по убыванию), затем по code. Без явного приоритета первым проверялся бы «ProcessApproved»
+-- (лексикографически меньше), его guard AllStagesCompleted проходит — и процесс завершался бы
+-- как Approved, теряя признак «с замечаниями», хотя HasComments истинен. Приоритет закрепляет
+-- более конкретный исход: сначала «с замечаниями», затем обычный.
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
@@ -42,7 +47,7 @@ values
         '{AllStagesCompleted,HasComments}',
         '{CompleteProcess}',
         '{approval.process.completed}',
-        0, true, now()
+        10, true, now()
     ),
     (
         '11111111-0007-0000-0000-000000000005', '11111111-0003-0000-0000-000000000001',

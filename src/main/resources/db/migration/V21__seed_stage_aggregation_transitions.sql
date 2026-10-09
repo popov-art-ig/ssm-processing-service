@@ -9,26 +9,17 @@ values
     ('AggregationApprovedWithComments', 'Агрегация: Согласован с замечаниями', 'Агрегация решений даёт результат «Согласован с замечаниями» (G-S-004)', 'aggregationApprovedWithCommentsGuard', 'GLOBAL', '{VALIDATION}', '{STAGE}', true, now(), now()),
     ('AggregationRework', 'Агрегация: На доработку', 'Агрегация решений даёт результат «На доработку» (хотя бы один Reject) (G-S-005)', 'aggregationReworkGuard', 'GLOBAL', '{VALIDATION}', '{STAGE}', true, now(), now());
 
--- action_registry (08_db_schema.md §16.2)
-insert into action_registry (code, display_name, description, handler, scope, categories, applicable_entities, is_active, created_at, updated_at)
-values
-    ('EvaluateAggregation', 'Оценить агрегацию решений', 'Проверяет все решения участников и программно запускает переход этапа (A-S-004)', 'evaluateAggregationAction', 'GLOBAL', '{ORCHESTRATION}', '{PARTICIPANT}', true, now(), now());
+-- action_registry: EvaluateAggregation регистрируется в V20 вместе с переходом Decide, который
+-- его вызывает (см. комментарий там).
 
--- status_registry (08_db_schema.md §5.1) — коды состояний StageStateMachine
+-- status_registry (08_db_schema.md §5.1) — коды состояний StageStateMachine.
+-- PK составной (code, entity_type) — V1.
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('Approved', 'STAGE', 'Согласован', false, true, now(), now()),
     ('ApprovedWithComments', 'STAGE', 'Согласован с замечаниями', false, true, now(), now()),
-    ('OnRework', 'STAGE', 'На доработку', false, true, now(), now());
-
--- Добавить EvaluateAggregation в переход Decide (из V20)
-update transition_config
-set actions = '{RecordDecision,RecordComment,EvaluateAggregation}'
-where code = 'Decide'
-  and config_id = (
-      select id from state_machine_config
-      where entity_type = 'PARTICIPANT' and process_type = 'STANDARD' and version = 1
-  );
+    ('OnRework', 'STAGE', 'На доработку', false, true, now(), now())
+on conflict (code, entity_type) do nothing;
 
 -- state_machine_config + state_config + transition_config (08_db_schema.md §15) — STAGE/STANDARD/v1
 -- Используем существующий config, созданный в V19
@@ -40,7 +31,12 @@ values
     ('11111111-0006-0000-0000-000000000004', '11111111-0004-0000-0000-000000000001', 'OnRework', 'На доработку', false, false, '{}', now())
 on conflict do nothing;
 
--- transition_config — три новых перехода для закрытия этапа
+-- transition_config — три новых перехода для закрытия этапа.
+--
+-- priority = 10 у StageApprovedWithComments: ModelFactory сортирует кандидатов по priority
+-- (по убыванию), затем по code. При равном приоритете первым проверялся бы «StageApproved»
+-- (лексикографически меньше), и при наличии замечаний этап всё равно закрывался бы как
+-- Approved. Явный приоритет закрепляет более конкретный исход.
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
@@ -57,7 +53,7 @@ values
         '{AllParticipantsDecided,AggregationApprovedWithComments}',
         '{}',
         '{approval.stage.completed}',
-        0, true, now()
+        10, true, now()
     ),
     (
         '11111111-0006-0000-0000-000000000007', '11111111-0004-0000-0000-000000000001',

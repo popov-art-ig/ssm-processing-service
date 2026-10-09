@@ -46,6 +46,17 @@ public class EvaluateProcessCompletionAction implements Action {
         StageInstance stage = (StageInstance) context.entity();
         ProcessInstance process = stage.getProcess();
 
+        // Завершённость процесса оценивается ТОЛЬКО после закрытия последнего этапа маршрута.
+        // Для промежуточного этапа проверка не имеет смысла: остальные этапы ещё не пройдены,
+        // а сам закрываемый этап уже записан финальным (TransitionEngine пишет статус до
+        // выполнения actions) — проверка «все этапы завершены» на этом шаге либо ложна, либо,
+        // при единственном этапе, преждевременно истинна.
+        boolean isLastStage = process.getStages().stream()
+                .noneMatch(s -> s.getOrderIdx() > stage.getOrderIdx());
+        if (!isLastStage) {
+            return;
+        }
+
         // Резолвить PROCESS config
         StateMachineConfig processConfig = stateMachineConfigRepository
                 .findByEntityTypeAndProcessTypeAndVersion(

@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.coordination.approval.domain.audit.AuditEvent;
@@ -41,6 +42,7 @@ import ru.coordination.approval.engine.registry.GuardRegistry;
  * единственным персистентным представлением текущего состояния (ADR-028).
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class TransitionEngine {
 
@@ -80,21 +82,32 @@ public class TransitionEngine {
         }
 
         for (TransitionConfig candidate : candidates) {
-            if (guardsPass(candidate, context)) {
+            String failedGuard = firstFailingGuard(candidate, context);
+            if (failedGuard == null) {
+                log.debug("transition {} ({} -> {}) chosen for {}", candidate.getCode(),
+                        candidate.getFromState(), candidate.getToState(), entityType);
                 return execute(entityType, entityId, candidate, context, statusWriter);
             }
+            // Диагностика: без неё отказ перехода выглядит как «ничего не произошло» — вызывающий
+            // код видит только notPerformed и не знает, какой guard заблокировал переход.
+            log.debug("guard '{}' rejected transition '{}' ({} -> {}) for {}",
+                    failedGuard, candidate.getCode(), candidate.getFromState(),
+                    candidate.getToState(), entityType);
         }
         return TransitionResult.notPerformed(fromState);
     }
 
-    private boolean guardsPass(TransitionConfig transition, TransitionContext context) {
+    /**
+     * @return код первого guard'а, вернувшего {@code false}, либо {@code null}, если все прошли
+     */
+    private String firstFailingGuard(TransitionConfig transition, TransitionContext context) {
         for (String guardCode : transition.getGuards()) {
             Guard guard = guardRegistry.resolve(guardCode);
             if (!guard.evaluate(context)) {
-                return false;
+                return guardCode;
             }
         }
-        return true;
+        return null;
     }
 
     private TransitionResult execute(
@@ -106,12 +119,24 @@ public class TransitionEngine {
 
         validateTargetStatus(entityType, transition.getToState());
 
+        // Новый статус фиксируется ДО выполнения actions: actions переходов закрытия этапа
+        // (ActivateNextStageAction, EvaluateProcessCompletionAction) и агрегации
+        // (EvaluateAggregationAction) проверяют состояние СВЯЗАННЫХ сущностей — «предыдущий этап
+        // завершён», «все этапы завершены», «есть этап на доработке». При записи статуса после
+        // actions эти проверки видели старое состояние, и переходы блокировались: следующий этап
+        // не активировался, процесс не завершался, ProcessRework не срабатывал.
+        //
+        // Guards самого перехода уже пройдены (шаг 2 алгоритма) и оценивались по исходному
+        // состоянию, поэтому на них смена порядка не влияет. Guard'ы вложенных переходов, которым
+        // важно отличие «уже завершён» от «завершается прямо сейчас», получают это отличие
+        // параметрами контекста (см. AllStagesCompletedGuard.checkingStageClosure).
+        statusWriter.accept(transition.getToState());
+
         for (String actionCode : transition.getActions()) {
             Action action = actionRegistry.resolve(actionCode);
             action.execute(context);
         }
 
-        statusWriter.accept(transition.getToState());
         recordAudit(entityType, entityId, transition, context);
 
         return TransitionResult.performed(

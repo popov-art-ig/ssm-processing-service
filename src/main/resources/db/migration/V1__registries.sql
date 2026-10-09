@@ -1,7 +1,13 @@
 -- 08_db_schema.md — Группа 1: Справочники (status_registry, decision_result_registry)
 
+-- Первичный ключ СОСТАВНОЙ (code, entity_type): один и тот же код статуса осмысленно
+-- повторяется для разных агрегатов (InProgress — PROCESS и REMARK, Draft — PROCESS и REMARK,
+-- Active — STAGE и REMARK). При глобальном PK по code повторная регистрация кода для другого
+-- агрегата молча конфликтовала, и статус для второго агрегата не появлялся —
+-- TransitionEngine.validateTargetStatus после этого отклонял переходы как «toState is not
+-- registered in status_registry for entityType=...».
 create table status_registry (
-    code                    varchar(100) primary key,
+    code                    varchar(100) not null,
     entity_type             varchar(50) not null,
     display_name            varchar(255) not null,
     description             text null,
@@ -10,7 +16,8 @@ create table status_registry (
     metadata                jsonb not null default '{}',
     is_active               boolean not null default true,
     created_at              timestamptz not null default now(),
-    updated_at              timestamptz not null default now()
+    updated_at              timestamptz not null default now(),
+    primary key (code, entity_type)
 );
 
 create index ix_status_registry_entity on status_registry(entity_type);

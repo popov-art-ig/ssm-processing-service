@@ -3,433 +3,215 @@ package ru.coordination.approval.engine;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
-import ru.coordination.approval.domain.audit.ActorType;
+import org.springframework.transaction.annotation.Transactional;
 import ru.coordination.approval.domain.common.DecisionMode;
-import ru.coordination.approval.domain.common.EntityType;
 import ru.coordination.approval.domain.common.ExecutionOrder;
 import ru.coordination.approval.domain.common.LifecycleStatus;
 import ru.coordination.approval.domain.common.ProcessType;
-import ru.coordination.approval.domain.common.RegistryScope;
 import ru.coordination.approval.domain.common.StageType;
+import ru.coordination.approval.domain.process.Participant;
+import ru.coordination.approval.domain.process.ParticipantRepository;
+import ru.coordination.approval.domain.process.ParticipantRole;
 import ru.coordination.approval.domain.process.ProcessInstance;
-import ru.coordination.approval.domain.process.StageInstance;
-import ru.coordination.approval.domain.registry.ActionRegistryEntry;
-import ru.coordination.approval.domain.registry.GuardRegistryEntry;
-import ru.coordination.approval.domain.registry.StatusRegistry;
-import ru.coordination.approval.domain.statemachine.StateConfig;
-import ru.coordination.approval.domain.statemachine.StateMachineConfig;
-import ru.coordination.approval.domain.statemachine.TransitionConfig;
-import ru.coordination.approval.domain.statemachine.TriggerType;
-import ru.coordination.approval.engine.model.StateConfigRepository;
-import ru.coordination.approval.engine.model.StateMachineConfigRepository;
-import ru.coordination.approval.engine.model.TransitionConfigRepository;
 import ru.coordination.approval.domain.process.ProcessRepository;
-import ru.coordination.approval.engine.registry.ActionRegistryRepository;
-import ru.coordination.approval.engine.registry.GuardRegistryRepository;
-import ru.coordination.approval.engine.StatusRegistryRepository;
-import ru.coordination.approval.engine.testsupport.EngineTestTransactionalRunner;
+import ru.coordination.approval.domain.process.StageInstance;
+import ru.coordination.approval.domain.process.StageIteration;
+import ru.coordination.approval.domain.template.Template;
+import ru.coordination.approval.domain.template.TemplateRepository;
+import ru.coordination.approval.service.DecisionService;
+import ru.coordination.approval.service.ProcessService;
 
 /**
- * Интеграционный тест PHASE-07: завершение последнего этапа → активация следующего
- * (если есть) → оценка завершённости процесса → установка completedAt.
+ * Интеграционный тест PHASE-07: завершение последнего этапа → завершение процесса.
  *
  * <p>Проверяет критерии приёмки:
  * <ul>
- *   <li>AC1: Завершение последнего этапа → активация следующего
- *   <li>AC2: Завершение всех этапов → процесс переходит в Approved/Rejected
- *   <li>AC3: У процесса устанавливается completedAt
+ *   <li>AC1: Завершение не последнего этапа активирует следующий;</li>
+ *   <li>AC2: Завершение всех этапов переводит процесс в Approved;</li>
+ *   <li>AC3: У процесса устанавливается completedAt.</li>
  * </ul>
+ *
+ * <p><b>Переписан при сборке.</b> Исходная версия этого теста не компилировалась: она собирала
+ * конфигурацию state machine через несуществующий API ({@code StatusRegistry.lifecycleStatus},
+ * {@code StateConfig.state}, {@code TransitionConfig.transitionCode/guardCodes/actionCodes},
+ * {@code StateMachineConfig.name/isActive}), которого в доменной модели нет. Вместо ручного
+ * сидирования используется то, что уже сеют миграции {@code V18}–{@code V22}, а сценарий
+ * проводится через публичные {@link ProcessService} и {@link DecisionService} — тот же приём,
+ * что в {@code ProcessServiceIntegrationTest} и {@code StageAggregationIntegrationTest}.
  */
-@SpringBootTest(properties = "spring.flyway.locations=classpath:db/migration,classpath:db/test-migration")
+@SpringBootTest
 @ActiveProfiles("test")
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@Transactional
 class ProcessCompletionIntegrationTest {
 
     @Autowired
-    private StateMachineConfigRepository stateMachineConfigRepository;
+    private ProcessService processService;
 
     @Autowired
-    private StateConfigRepository stateConfigRepository;
-
-    @Autowired
-    private TransitionConfigRepository transitionConfigRepository;
-
-    @Autowired
-    private GuardRegistryRepository guardRegistryRepository;
-
-    @Autowired
-    private ActionRegistryRepository actionRegistryRepository;
-
-    @Autowired
-    private StatusRegistryRepository statusRegistryRepository;
+    private DecisionService decisionService;
 
     @Autowired
     private ProcessRepository processRepository;
 
     @Autowired
-    private EngineTestTransactionalRunner runner;
+    private ParticipantRepository participantRepository;
 
     @Autowired
-    private TransitionEngine transitionEngine;
+    private TemplateRepository templateRepository;
 
-    private UUID stageConfigId;
-    private UUID processConfigId;
+    @Test
+    void completingLastStageCompletesProcessAndSetsCompletedAt() {
+        UUID initiatorId = UUID.randomUUID();
+        Fixture fixture = prepareTwoStageProcess(initiatorId);
 
-    @BeforeAll
-    void seedConfiguration() {
-        Instant now = Instant.now();
+        // Запуск: Draft -> InProgress, первый этап активируется, участники получают задачи
+        processService.startProcess(fixture.processId(), initiatorId);
 
-        // Guards
-        guardRegistryRepository.save(GuardRegistryEntry.builder()
-                .code("AllStagesCompleted")
-                .displayName("All stages completed")
-                .description("Checks if all stages are in completed status")
-                .handler("allStagesCompletedGuard")
-                .scope(RegistryScope.GLOBAL)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        assertThat(stageStatus(fixture.processId(), 0)).isEqualTo("Active");
+        assertThat(stageStatus(fixture.processId(), 1)).isEqualTo("Pending");
 
-        guardRegistryRepository.save(GuardRegistryEntry.builder()
-                .code("HasComments")
-                .displayName("Has comments")
-                .description("Checks if any stage has comments")
-                .handler("hasCommentsGuard")
-                .scope(RegistryScope.GLOBAL)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        // Этап 1 завершён => процесс ещё InProgress, активируется этап 2 (AC1)
+        fixture.decide(0, "APPROVE", null);
 
-        // Actions
-        actionRegistryRepository.save(ActionRegistryEntry.builder()
-                .code("ActivateNextStage")
-                .displayName("Activate next stage")
-                .description("Transitions next stage from Pending to Active")
-                .handler("activateNextStageAction")
-                .scope(RegistryScope.GLOBAL)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        assertThat(stageStatus(fixture.processId(), 0)).isEqualTo("Approved");
+        assertThat(stageStatus(fixture.processId(), 1)).isEqualTo("Active");
 
-        actionRegistryRepository.save(ActionRegistryEntry.builder()
-                .code("EvaluateProcessCompletion")
-                .displayName("Evaluate process completion")
-                .description("Checks if all stages completed and triggers process transition")
-                .handler("evaluateProcessCompletionAction")
-                .scope(RegistryScope.GLOBAL)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        ProcessInstance afterFirstStage = processRepository.findById(fixture.processId()).orElseThrow();
+        assertThat(afterFirstStage.getStatus()).isEqualTo("InProgress");
+        assertThat(afterFirstStage.getCompletedAt()).isNull();
 
-        actionRegistryRepository.save(ActionRegistryEntry.builder()
-                .code("CompleteProcess")
-                .displayName("Complete process")
-                .description("Sets completedAt timestamp")
-                .handler("completeProcessAction")
-                .scope(RegistryScope.GLOBAL)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        // Этап 2 завершён => все этапы согласованы => процесс Approved + completedAt (AC2, AC3)
+        fixture.decide(1, "APPROVE", null);
 
-        // Status registries
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.STAGE)
-                .processType(ProcessType.STANDARD)
-                .status("Pending")
-                .displayName("Pending")
-                .lifecycleStatus(LifecycleStatus.PENDING)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        assertThat(stageStatus(fixture.processId(), 1)).isEqualTo("Approved");
 
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.STAGE)
-                .processType(ProcessType.STANDARD)
-                .status("Active")
-                .displayName("Active")
-                .lifecycleStatus(LifecycleStatus.IN_PROGRESS)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.STAGE)
-                .processType(ProcessType.STANDARD)
-                .status("Approved")
-                .displayName("Approved")
-                .lifecycleStatus(LifecycleStatus.COMPLETED)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.PROCESS)
-                .processType(ProcessType.STANDARD)
-                .status("InProgress")
-                .displayName("In Progress")
-                .lifecycleStatus(LifecycleStatus.IN_PROGRESS)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.PROCESS)
-                .processType(ProcessType.STANDARD)
-                .status("Approved")
-                .displayName("Approved")
-                .lifecycleStatus(LifecycleStatus.COMPLETED)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        statusRegistryRepository.save(StatusRegistry.builder()
-                .entityType(EntityType.PROCESS)
-                .processType(ProcessType.STANDARD)
-                .status("ApprovedWithComments")
-                .displayName("Approved With Comments")
-                .lifecycleStatus(LifecycleStatus.COMPLETED)
-                .active(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        // Stage state machine
-        StateMachineConfig stageConfig = stateMachineConfigRepository.save(StateMachineConfig.builder()
-                .entityType(EntityType.STAGE)
-                .processType(ProcessType.STANDARD)
-                .version(1)
-                .name("Stage workflow for process completion test")
-                .isActive(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-        stageConfigId = stageConfig.getId();
-
-        StateConfig stagePending = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(stageConfig)
-                .state("Pending")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        StateConfig stageActive = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(stageConfig)
-                .state("Active")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        StateConfig stageApproved = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(stageConfig)
-                .state("Approved")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        // Transition: Approved → (activate next + evaluate completion)
-        transitionConfigRepository.save(TransitionConfig.builder()
-                .stateMachineConfig(stageConfig)
-                .fromState(stageApproved)
-                .toState(stageApproved)
-                .transitionCode("StageCompleted")
-                .priority(100)
-                .triggerType(TriggerType.SYSTEM_ACTION)
-                .guardCodes(new String[] {})
-                .actionCodes(new String[] {"ActivateNextStage", "EvaluateProcessCompletion"})
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        // Process state machine
-        StateMachineConfig processConfig = stateMachineConfigRepository.save(StateMachineConfig.builder()
-                .entityType(EntityType.PROCESS)
-                .processType(ProcessType.STANDARD)
-                .version(1)
-                .name("Process workflow for completion test")
-                .isActive(true)
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-        processConfigId = processConfig.getId();
-
-        StateConfig processInProgress = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(processConfig)
-                .state("InProgress")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        StateConfig processApproved = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(processConfig)
-                .state("Approved")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        StateConfig processApprovedWithComments = stateConfigRepository.save(StateConfig.builder()
-                .stateMachineConfig(processConfig)
-                .state("ApprovedWithComments")
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        // Transition: InProgress → Approved (when all stages approved, no comments)
-        transitionConfigRepository.save(TransitionConfig.builder()
-                .stateMachineConfig(processConfig)
-                .fromState(processInProgress)
-                .toState(processApproved)
-                .transitionCode("ProcessApproved")
-                .priority(200)
-                .triggerType(TriggerType.SYSTEM_ACTION)
-                .guardCodes(new String[] {"AllStagesCompleted"})
-                .actionCodes(new String[] {"CompleteProcess"})
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
-
-        // Transition: InProgress → ApprovedWithComments (when all stages approved, has comments)
-        transitionConfigRepository.save(TransitionConfig.builder()
-                .stateMachineConfig(processConfig)
-                .fromState(processInProgress)
-                .toState(processApprovedWithComments)
-                .transitionCode("ProcessApprovedWithComments")
-                .priority(100)
-                .triggerType(TriggerType.SYSTEM_ACTION)
-                .guardCodes(new String[] {"AllStagesCompleted", "HasComments"})
-                .actionCodes(new String[] {"CompleteProcess"})
-                .createdAt(now)
-                .updatedAt(now)
-                .build());
+        ProcessInstance completed = processRepository.findById(fixture.processId()).orElseThrow();
+        assertThat(completed.getStatus()).isEqualTo("Approved");
+        assertThat(completed.getCompletedAt()).isNotNull();
     }
 
     @Test
-    void completingLastStageActivatesNextAndCompletesProcessWhenAllDone() {
-        UUID processId = runner.runInNewTransaction(() -> {
-            ProcessInstance process = ProcessInstance.builder()
-                    .entityType("Document")
-                    .entityId(UUID.randomUUID())
-                    .templateRef(UUID.randomUUID())
-                    .processType(ProcessType.STANDARD)
-                    .configVersion(1)
-                    .status("InProgress")
-                    .initiatorId(UUID.randomUUID())
-                    .createdAt(Instant.now())
-                    .startedAt(Instant.now())
+    void processStaysInProgressWhileNotAllStagesApproved() {
+        UUID initiatorId = UUID.randomUUID();
+        Fixture fixture = prepareTwoStageProcess(initiatorId);
+
+        processService.startProcess(fixture.processId(), initiatorId);
+        fixture.decide(0, "APPROVE", null);
+
+        ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
+        assertThat(process.getStatus()).isEqualTo("InProgress");
+        assertThat(process.getCompletedAt()).isNull();
+    }
+
+    // ------------------------------------------------------------------ фикстура
+
+    private record Fixture(UUID processId, List<UUID> stageIds, List<List<UUID>> participantIds,
+                           List<UUID> participantUserIds, DecisionService decisionService) {
+
+        void decide(int stageIndex, String decisionType, String comment) {
+            UUID stageId = stageIds.get(stageIndex);
+            UUID participantId = participantIds.get(stageIndex).get(0);
+            UUID actorId = participantUserIds.get(stageIndex);
+            decisionService.decide(processId, stageId, participantId, decisionType, comment, actorId);
+        }
+    }
+
+    /** Читает статус этапа из БД, а не из памяти — состояние меняют переходы в других транзакциях. */
+    private String stageStatus(UUID processId, int stageIndex) {
+        return processRepository.findById(processId).orElseThrow()
+                .getStages().get(stageIndex).getStatus();
+    }
+
+    /**
+     * Два обязательных этапа по одному участнику ({@code DecisionMode.AND}). Возвращает
+     * идентификаторы, чтобы тест читал состояние из БД, а не из памяти.
+     */
+    private Fixture prepareTwoStageProcess(UUID initiatorId) {
+        Instant now = Instant.now();
+
+        Template template = templateRepository.save(Template.builder()
+                .id(UUID.randomUUID())
+                .name("Completion template " + UUID.randomUUID())
+                .processType(ProcessType.STANDARD)
+                .status(LifecycleStatus.PUBLISHED)
+                .version(1)
+                .createdAt(now)
+                .createdBy(UUID.randomUUID())
+                .updatedAt(now)
+                .build());
+
+        ProcessInstance process = ProcessInstance.builder()
+                .id(UUID.randomUUID())
+                .entityType("DOCUMENT")
+                .entityId(UUID.randomUUID())
+                .templateRef(template.getId())
+                .processType(ProcessType.STANDARD)
+                .configVersion(1)
+                .status("Draft")
+                .initiatorId(initiatorId)
+                .createdAt(now)
+                .stages(new ArrayList<>())
+                .build();
+
+        List<UUID> stageIds = new ArrayList<>();
+        List<List<UUID>> participantIds = new ArrayList<>();
+        List<UUID> participantUserIds = new ArrayList<>();
+
+        for (int i = 0; i < 2; i++) {
+            StageInstance stage = StageInstance.builder()
+                    .id(UUID.randomUUID())
+                    .process(process)
+                    .orderIdx(i)
+                    .originalOrderIdx(i)
+                    .stageType(StageType.APPROVAL)
+                    .duration(3)
+                    .decisionMode(DecisionMode.AND)
+                    .mandatory(true)
+                    .executionOrder(ExecutionOrder.PARALLEL)
+                    .status("Pending")
+                    .createdAt(now)
                     .build();
 
-            // Create 3 stages: first Active, second and third Pending
-            for (int i = 1; i <= 3; i++) {
-                StageInstance stage = StageInstance.builder()
-                        .process(process)
-                        .orderIdx(i)
-                        .originalOrderIdx(i)
-                        .stageType(StageType.APPROVAL)
-                        .duration(5)
-                        .decisionMode(DecisionMode.UNANIMOUS)
-                        .executionOrder(ExecutionOrder.PARALLEL)
-                        .status(i == 1 ? "Active" : "Pending")
-                        .createdAt(Instant.now())
-                        .build();
-                process.getStages().add(stage);
-            }
+            StageIteration iteration = StageIteration.builder()
+                    .id(UUID.randomUUID())
+                    .stage(stage)
+                    .iterationIdx(0)
+                    .status("Active")
+                    .startedAt(now)
+                    .createdAt(now)
+                    .build();
 
-            return processRepository.save(process).getId();
-        });
+            UUID approverId = UUID.randomUUID();
+            Participant participant = Participant.builder()
+                    .id(UUID.randomUUID())
+                    .stageIteration(iteration)
+                    .userId(approverId)
+                    .role(ParticipantRole.APPROVER)
+                    .orderIdx(0)
+                    .status("Pending")
+                    .createdAt(now)
+                    .updatedAt(now)
+                    .build();
 
-        // Complete stage 1 → should activate stage 2
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            StageInstance stage1 = process.getStages().get(0);
-            stage1.setStatus("Approved");
-            stage1.setCompletedAt(Instant.now());
-            processRepository.save(process);
+            iteration.setParticipants(List.of(participant));
+            stage.setIterations(List.of(iteration));
+            process.getStages().add(stage);
 
-            transitionEngine.transition(
-                    EntityType.STAGE,
-                    stage1.getId(),
-                    stageConfigId,
-                    "Approved",
-                    TriggerType.SYSTEM_ACTION,
-                    new TransitionContext(stage1, UUID.randomUUID(), ActorType.SYSTEM, Map.of()),
-                    entity -> {});
-        });
+            stageIds.add(stage.getId());
+            participantIds.add(List.of(participant.getId()));
+            participantUserIds.add(approverId);
+        }
 
-        // Verify stage 2 is now Active, process still InProgress
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            assertThat(process.getStages().get(0).getStatus()).isEqualTo("Approved");
-            assertThat(process.getStages().get(1).getStatus()).isEqualTo("Active");
-            assertThat(process.getStages().get(2).getStatus()).isEqualTo("Pending");
-            assertThat(process.getStatus()).isEqualTo("InProgress");
-            assertThat(process.getCompletedAt()).isNull();
-        });
+        processRepository.save(process);
 
-        // Complete stage 2 → should activate stage 3
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            StageInstance stage2 = process.getStages().get(1);
-            stage2.setStatus("Approved");
-            stage2.setCompletedAt(Instant.now());
-            processRepository.save(process);
-
-            transitionEngine.transition(
-                    EntityType.STAGE,
-                    stage2.getId(),
-                    stageConfigId,
-                    "Approved",
-                    TriggerType.SYSTEM_ACTION,
-                    new TransitionContext(stage2, UUID.randomUUID(), ActorType.SYSTEM, Map.of()),
-                    entity -> {});
-        });
-
-        // Verify stage 3 is now Active
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            assertThat(process.getStages().get(2).getStatus()).isEqualTo("Active");
-            assertThat(process.getStatus()).isEqualTo("InProgress");
-        });
-
-        // Complete stage 3 → no more stages, process should complete
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            StageInstance stage3 = process.getStages().get(2);
-            stage3.setStatus("Approved");
-            stage3.setCompletedAt(Instant.now());
-            processRepository.save(process);
-
-            transitionEngine.transition(
-                    EntityType.STAGE,
-                    stage3.getId(),
-                    stageConfigId,
-                    "Approved",
-                    TriggerType.SYSTEM_ACTION,
-                    new TransitionContext(stage3, UUID.randomUUID(), ActorType.SYSTEM, Map.of()),
-                    entity -> {});
-        });
-
-        // Verify process is Approved and has completedAt
-        runner.runInNewTransaction(() -> {
-            ProcessInstance process = processRepository.findById(processId).orElseThrow();
-            assertThat(process.getStatus()).isEqualTo("Approved");
-            assertThat(process.getCompletedAt()).isNotNull();
-        });
+        // Участники перечитываются после старта процесса: AssignParticipantTasks меняет их статус
+        return new Fixture(process.getId(), stageIds, participantIds, participantUserIds, decisionService);
     }
 }

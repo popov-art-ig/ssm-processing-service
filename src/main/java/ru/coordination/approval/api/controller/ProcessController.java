@@ -8,21 +8,18 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
-import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import ru.coordination.approval.api.dto.process.*;
 import ru.coordination.approval.api.exception.EntityNotFoundException;
 import ru.coordination.approval.api.exception.ErrorResponse;
-import ru.coordination.approval.api.mapper.ProcessMapper;
+import ru.coordination.approval.api.service.ProcessViewService;
 import ru.coordination.approval.domain.process.ProcessInstance;
-import ru.coordination.approval.domain.process.ProcessRepository;
+import ru.coordination.approval.domain.process.StageInstance;
 import ru.coordination.approval.service.ProcessService;
 
 @RestController
@@ -32,8 +29,7 @@ import ru.coordination.approval.service.ProcessService;
 public class ProcessController {
 
     private final ProcessService processService;
-    private final ProcessRepository processRepository;
-    private final ProcessMapper processMapper;
+    private final ProcessViewService processViewService;
 
     @PostMapping
     @Operation(summary = "Создать процесс согласования",
@@ -47,12 +43,8 @@ public class ProcessController {
                      content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     public ResponseEntity<ProcessDto> createProcess(@Valid @RequestBody CreateProcessRequest request) {
-        // TODO: Implement process creation from entity snapshot
-        // 1. Create EntitySnapshot from request
-        // 2. MatchService.findMatchingTemplates()
-        // 3. RouteGeneratorService.generateRoute()
-        // 4. Map to ProcessDto
-        throw new UnsupportedOperationException("Not implemented yet");
+        ProcessInstance created = processService.createProcess(request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(processViewService.getById(created.getId()));
     }
 
     @GetMapping("/{processId}")
@@ -67,11 +59,8 @@ public class ProcessController {
     public ResponseEntity<ProcessDto> getProcess(
             @Parameter(description = "ID процесса", required = true)
             @PathVariable UUID processId) {
-        ProcessInstance process = processRepository.findById(processId)
-                .orElseThrow(() -> new EntityNotFoundException("Process not found: " + processId));
-        return ResponseEntity.ok(processMapper.toDto(process));
+        return ResponseEntity.ok(processViewService.getById(processId));
     }
-
     @PostMapping("/{processId}/start")
     @Operation(summary = "Запустить процесс",
                description = "Переводит процесс из состояния Draft в InProgress")
@@ -87,8 +76,8 @@ public class ProcessController {
             @Parameter(description = "ID процесса", required = true)
             @PathVariable UUID processId,
             @Valid @RequestBody StartProcessRequest request) {
-        // TODO: Implement process start
-        throw new UnsupportedOperationException("Not implemented yet");
+        processService.startProcess(processId, request.actorId());
+        return ResponseEntity.ok(processViewService.getById(processId));
     }
 
     @PostMapping("/{processId}/recall")
@@ -104,8 +93,8 @@ public class ProcessController {
             @Parameter(description = "ID процесса", required = true)
             @PathVariable UUID processId,
             @Valid @RequestBody RecallProcessRequest request) {
-        // TODO: Implement process recall
-        throw new UnsupportedOperationException("Not implemented yet");
+        processService.recall(processId, request.actorId(), request.reason());
+        return ResponseEntity.ok(processViewService.getById(processId));
     }
 
     @PostMapping("/{processId}/resume")
@@ -121,8 +110,18 @@ public class ProcessController {
             @Parameter(description = "ID процесса", required = true)
             @PathVariable UUID processId,
             @Valid @RequestBody ResumeProcessRequest request) {
-        // TODO: Implement process resume after rework
-        throw new UnsupportedOperationException("Not implemented yet");
+        // Контракт API оперирует targetStageId (07_api_contract.md §12.9), а переход
+        // ResumeProcess — порядковым индексом целевого этапа, который читает
+        // IsTargetStageAllowedGuard из параметров. Восстанавливаем индекс по id этапа.
+        int targetStageOrderIdx = processService.getById(processId).getStages().stream()
+                .filter(stage -> stage.getId().equals(request.targetStageId()))
+                .mapToInt(StageInstance::getOrderIdx)
+                .findFirst()
+                .orElseThrow(() -> new EntityNotFoundException(
+                        "Stage not found in process %s: %s".formatted(processId, request.targetStageId())));
+
+        processService.resume(processId, targetStageOrderIdx, request.actorId());
+        return ResponseEntity.ok(processViewService.getById(processId));
     }
 
     @GetMapping
@@ -144,8 +143,6 @@ public class ProcessController {
             @Parameter(description = "Размер страницы")
             @RequestParam(defaultValue = "20") int size) {
 
-        Pageable pageable = PageRequest.of(page, size);
-        Page<ProcessInstance> processes = processRepository.findAll(pageable);
-        return ResponseEntity.ok(processes.map(processMapper::toDto));
+        return ResponseEntity.ok(processViewService.list(status, initiatorId, entityType, page, size));
     }
 }

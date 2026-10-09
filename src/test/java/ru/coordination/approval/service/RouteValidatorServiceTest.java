@@ -24,6 +24,9 @@ import ru.coordination.approval.domain.template.SlotTemplate;
 import ru.coordination.approval.domain.template.SlotType;
 import ru.coordination.approval.domain.template.StageTemplate;
 import ru.coordination.approval.domain.template.Template;
+import ru.coordination.approval.domain.template.SlotTemplate;
+import ru.coordination.approval.domain.template.SlotType;
+import ru.coordination.approval.domain.template.StageTemplate;
 import ru.coordination.approval.exception.RequiredSlotNotResolvedException;
 
 class RouteValidatorServiceTest {
@@ -61,10 +64,8 @@ class RouteValidatorServiceTest {
         ProcessInstance process = ProcessInstance.builder()
                 .entityType("CONTRACT")
                 .entityId(UUID.randomUUID())
-                .templateId(UUID.randomUUID())
+                .templateRef(UUID.randomUUID())
                 .status("Pending")
-                .organizationId(UUID.randomUUID())
-                .createdBy(UUID.randomUUID())
                 .createdAt(Instant.now())
                 .stages(new ArrayList<>())
                 .build();
@@ -77,7 +78,7 @@ class RouteValidatorServiceTest {
                 .executionOrder(ExecutionOrder.PARALLEL)
                 .decisionMode(DecisionMode.AND)
                 .status("Pending")
-                .dueDate(Instant.now().plus(3, ChronoUnit.DAYS))
+                .dueAt(Instant.now().plus(3, ChronoUnit.DAYS))
                 .createdAt(Instant.now())
                 .iterations(new ArrayList<>())
                 .build();
@@ -90,12 +91,47 @@ class RouteValidatorServiceTest {
                 .participants(new ArrayList<>())
                 .build();
 
-        // Add optional slot participant (or none at all)
+        // Ни одного участника, но и обязательных слотов в шаблоне нет => маршрут валиден.
         stage.getIterations().add(iteration);
         process.getStages().add(stage);
 
-        assertThatCode(() -> validatorService.validate(process))
+        StageTemplate optionalSlotStage = StageTemplate.builder()
+                .orderIdx(1)
+                .stageType(StageType.APPROVAL)
+                .duration(3)
+                .actorSlots(new ArrayList<>(List.of(
+                        SlotTemplate.builder()
+                                .slotType(SlotType.ACTOR)
+                                .orderIdx(1)
+                                .required(false)
+                                .acceptableRoles(new ArrayList<>())
+                                .build())))
+                .build();
+
+        assertThatCode(() -> validatorService.validate(process, List.of(optionalSlotStage)))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void throwsWhenRequiredSlotNotResolvedComparedToTemplate() {
+        ProcessInstance process = createValidProcess();
+        process.getStages().get(0).getIterations().get(0).getParticipants().clear();
+
+        StageTemplate requiredSlotStage = StageTemplate.builder()
+                .orderIdx(1)
+                .stageType(StageType.APPROVAL)
+                .duration(3)
+                .actorSlots(new ArrayList<>(List.of(
+                        SlotTemplate.builder()
+                                .slotType(SlotType.ACTOR)
+                                .orderIdx(1)
+                                .required(true)
+                                .acceptableRoles(new ArrayList<>())
+                                .build())))
+                .build();
+
+        assertThatThrownBy(() -> validatorService.validate(process, List.of(requiredSlotStage)))
+                .isInstanceOf(RequiredSlotNotResolvedException.class);
     }
 
     @Test
@@ -103,17 +139,15 @@ class RouteValidatorServiceTest {
         ProcessInstance process = ProcessInstance.builder()
                 .entityType("CONTRACT")
                 .entityId(UUID.randomUUID())
-                .templateId(UUID.randomUUID())
+                .templateRef(UUID.randomUUID())
                 .status("Pending")
-                .organizationId(UUID.randomUUID())
-                .createdBy(UUID.randomUUID())
                 .createdAt(Instant.now())
                 .stages(new ArrayList<>())
                 .build();
 
         assertThatThrownBy(() -> validatorService.validate(process))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("stages");
+                .hasMessageContaining("at least one stage");
     }
 
     @Test
@@ -121,10 +155,8 @@ class RouteValidatorServiceTest {
         ProcessInstance process = ProcessInstance.builder()
                 .entityType("CONTRACT")
                 .entityId(UUID.randomUUID())
-                .templateId(UUID.randomUUID())
+                .templateRef(UUID.randomUUID())
                 .status("Pending")
-                .organizationId(UUID.randomUUID())
-                .createdBy(UUID.randomUUID())
                 .createdAt(Instant.now())
                 .stages(new ArrayList<>())
                 .build();
@@ -150,10 +182,8 @@ class RouteValidatorServiceTest {
         ProcessInstance process = ProcessInstance.builder()
                 .entityType("CONTRACT")
                 .entityId(UUID.randomUUID())
-                .templateId(UUID.randomUUID())
+                .templateRef(UUID.randomUUID())
                 .status("Pending")
-                .organizationId(UUID.randomUUID())
-                .createdBy(UUID.randomUUID())
                 .createdAt(Instant.now())
                 .stages(new ArrayList<>())
                 .build();
@@ -166,7 +196,7 @@ class RouteValidatorServiceTest {
                 .executionOrder(ExecutionOrder.PARALLEL)
                 .decisionMode(DecisionMode.AND)
                 .status("Pending")
-                .dueDate(Instant.now().plus(3, ChronoUnit.DAYS))
+                .dueAt(Instant.now().plus(3, ChronoUnit.DAYS))
                 .createdAt(Instant.now())
                 .iterations(new ArrayList<>())
                 .build();

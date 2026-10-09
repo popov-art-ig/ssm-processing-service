@@ -8,7 +8,8 @@ insert into guard_registry (code, display_name, description, handler, scope, cat
 values
     ('HasStageOnRework', 'Есть этап на доработке', 'Хотя бы один этап процесса в статусе OnRework (G-P-007)', 'hasStageOnReworkGuard', 'GLOBAL', '{VALIDATION}', '{PROCESS}', true, now(), now()),
     ('AllRemarksProcessed', 'Все замечания обработаны', 'Все замечания процесса обработаны (G-P-008, PHASE-08: заглушка, всегда true)', 'allRemarksProcessedGuard', 'GLOBAL', '{VALIDATION}', '{PROCESS}', true, now(), now()),
-    ('IsTargetStageAllowed', 'Целевой этап допустим', 'Целевой этап входит в список allowedReturnStages (G-P-009, PHASE-08: упрощение)', 'isTargetStageAllowedGuard', 'GLOBAL', '{VALIDATION}', '{PROCESS}', true, now(), now());
+    ('IsTargetStageAllowed', 'Целевой этап допустим', 'Целевой этап входит в список allowedReturnStages (G-P-009, PHASE-08: упрощение)', 'isTargetStageAllowedGuard', 'GLOBAL', '{VALIDATION}', '{PROCESS}', true, now(), now()),
+    ('IsRecallRequest', 'Вызов является отзывом процесса', 'В параметрах перехода передан reason, то есть вызывающий код отзывает процесс, а не возобновляет его', 'isRecallRequestGuard', 'GLOBAL', '{VALIDATION}', '{PROCESS}', true, now(), now());
 
 -- 2. action_registry (08_db_schema.md §16.2)
 insert into action_registry (code, display_name, description, handler, scope, categories, applicable_entities, is_active, created_at, updated_at)
@@ -21,14 +22,43 @@ values
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('OnRework', 'PROCESS', 'На доработке', false, true, now(), now()),
+    ('Recalled', 'PROCESS', 'Отозван', true, true, now(), now()),
     ('Rejected', 'STAGE', 'Отклонён при возврате', false, true, now(), now())
-on conflict (code) do nothing;
+on conflict (code, entity_type) do nothing;
 
 -- 4. state_machine_config для PROCESS (создан в V18, переиспользуем)
 -- state_config для новых статусов процесса
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)
 values
-    ('11111111-0008-0000-0000-000000000001', '11111111-0003-0000-0000-000000000001', 'OnRework', 'На доработке', false, false, '{}', now())
+    ('11111111-0008-0000-0000-000000000001', '11111111-0003-0000-0000-000000000001', 'OnRework', 'На доработке', false, false, '{}', now()),
+    ('11111111-0008-0000-0000-000000000006', '11111111-0003-0000-0000-000000000001', 'Recalled', 'Отозван', false, true, '{}', now())
+on conflict do nothing;
+
+-- 4a. transition_config — отзыв процесса (07_api_contract.md §12.8):
+-- RecallProcess из InProgress и из OnRework. TransitionEngine выбирает кандидата по
+-- (entityType, fromState, trigger), поэтому один и тот же code с разными from_state допустим
+-- (уникальность в БД — по (config_id, code, from_state), V11).
+--
+-- Guard IsRecallRequest отличает отзыв от возобновления: из OnRework по USER_ACTION доступны и
+-- RecallProcess, и ResumeProcess, поэтому намерение передаётся параметром reason.
+insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
+values
+    (
+        '11111111-0008-0000-0000-000000000007', '11111111-0003-0000-0000-000000000001',
+        'RecallProcess', 'InProgress', 'Recalled', 'USER_ACTION',
+        '{IsInitiator,IsRecallRequest}',
+        '{}',
+        '{approval.process.recalled}',
+        0, true, now()
+    ),
+    (
+        '11111111-0008-0000-0000-000000000008', '11111111-0003-0000-0000-000000000001',
+        'RecallProcess', 'OnRework', 'Recalled', 'USER_ACTION',
+        '{IsInitiator,IsRecallRequest}',
+        '{}',
+        '{approval.process.recalled}',
+        0, true, now()
+    )
 on conflict do nothing;
 
 -- 5. transition_config — переход ProcessRework (InProgress → OnRework)
@@ -39,12 +69,17 @@ values
         'ProcessRework', 'InProgress', 'OnRework', 'SYSTEM_ACTION',
         '{HasStageOnRework}',
         '{}',
-        '{approval.process.on_rework}',
+        '{approval.process.rework-required}',
         0, true, now()
     )
 on conflict do nothing;
 
--- 6. transition_config — переход ResumeProcess (OnRework → InProgress)
+-- 6. transition_config — переход ResumeProcess (OnRework → InProgress).
+-- priority = 10: из состояния OnRework по USER_ACTION доступны ДВА перехода — ResumeProcess и
+-- RecallProcess (шаг 4a). ModelFactory сортирует кандидатов по priority (по убыванию), затем по
+-- code, поэтому при равном приоритете побеждал бы «RecallProcess» (лексикографически меньше), и
+-- возобновление процесса превращалось бы в отзыв. Явный приоритет закрепляет возобновление
+-- как основной сценарий для OnRework, а отзыв остаётся доступен, если возобновление невозможно.
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
@@ -53,7 +88,7 @@ values
         '{IsInitiator,AllRemarksProcessed,IsTargetStageAllowed}',
         '{RejectStagesFrom,ActivateTargetStage}',
         '{approval.process.resumed}',
-        0, true, now()
+        10, true, now()
     )
 on conflict do nothing;
 
@@ -73,15 +108,68 @@ values
     ('11111111-0008-0000-0000-000000000004', '11111111-0004-0000-0000-000000000001', 'Rejected', 'Отклонён', false, true, '{}', now())
 on conflict do nothing;
 
--- 9. transition_config — переход ReactivateStage (OnRework → Active) для этапов
--- Используется в ActivateTargetStageAction для активации этапа после возврата
+-- 9. transition_config — переактивация этапа после возврата (System -> Active).
+-- Используется в ActivateTargetStageAction.
+--
+-- ВАЖНО про guards и actions. Контекст этого перехода — StageInstance, поэтому:
+--   * actions только уровня STAGE: AssignParticipantTasks/SetStageStartedAt/CalcStageDueAt.
+--     Прежняя конфигурация указывала AssignStageTasks (A-P-001), который приводит
+--     context.entity() к ProcessInstance и падал с ClassCastException;
+--   * guards не процессные (AllMandatorySlotsFilled/AllDurationsValid приводят context.entity()
+--     к ProcessInstance). Участники новой итерации назначаются самим AssignParticipantTasks.
+--
+-- Три перехода описывают возврат на этап из разных состояний. Уникальность в БД — по
+-- (config_id, code, from_state) (V11), поэтому один код с разными from_state допустим.
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
         '11111111-0008-0000-0000-000000000005', '11111111-0004-0000-0000-000000000001',
         'ReactivateStage', 'OnRework', 'Active', 'SYSTEM_ACTION',
-        '{AllMandatorySlotsFilled,AllDurationsValid}',
-        '{AssignStageTasks}',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
+        '{approval.stage.activated}',
+        0, true, now()
+    ),
+    (
+        '11111111-0008-0000-0000-000000000009', '11111111-0004-0000-0000-000000000001',
+        'ReactivateStage', 'Approved', 'Active', 'SYSTEM_ACTION',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
+        '{approval.stage.activated}',
+        0, true, now()
+    ),
+    (
+        '11111111-0008-0000-0000-000000000010', '11111111-0004-0000-0000-000000000001',
+        'ReactivateStage', 'ApprovedWithComments', 'Active', 'SYSTEM_ACTION',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
+        '{approval.stage.activated}',
+        0, true, now()
+    )
+on conflict do nothing;
+insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
+values
+    (
+        '11111111-0008-0000-0000-000000000005', '11111111-0004-0000-0000-000000000001',
+        'ReactivateStage', 'OnRework', 'Active', 'SYSTEM_ACTION',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
+        '{approval.stage.activated}',
+        0, true, now()
+    ),
+    (
+        '11111111-0008-0000-0000-000000000009', '11111111-0004-0000-0000-000000000001',
+        'ReactivateStage', 'Approved', 'Active', 'SYSTEM_ACTION',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
+        '{approval.stage.activated}',
+        0, true, now()
+    ),
+    (
+        '11111111-0008-0000-0000-000000000010', '11111111-0004-0000-0000-000000000001',
+        'ReactivateStage', 'ApprovedWithComments', 'Active', 'SYSTEM_ACTION',
+        '{}',
+        '{AssignParticipantTasks,SetStageStartedAt,CalcStageDueAt}',
         '{approval.stage.activated}',
         0, true, now()
     )

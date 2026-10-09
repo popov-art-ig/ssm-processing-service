@@ -53,6 +53,14 @@ create table transition_config (
     created_at              timestamptz not null default now()
 );
 
-create unique index ux_transition_config_code on transition_config(config_id, code);
+-- Уникальность перехода — по (config_id, code, from_state), а НЕ по (config_id, code).
+-- Один и тот же код перехода осмысленно повторяется для разных исходных состояний:
+--   * RecallProcess  — InProgress -> Recalled и OnRework -> Recalled (07_api_contract.md §12.8);
+--   * ReactivateStage — используется при возврате на этап из разных состояний.
+-- TransitionEngine ищет кандидатов по (fromState, trigger), поэтому несколько строк с одним
+-- code и разными from_state — штатная ситуация. При индексе только по (config_id, code)
+-- второй INSERT молча отбрасывался (on conflict do nothing), и переходы «пропадали» из карты:
+-- отзыв процесса из OnRework и переактивация уже согласованного этапа не работали.
+create unique index ux_transition_config_code on transition_config(config_id, code, from_state);
 create index ix_transition_config_from on transition_config(config_id, from_state);
 create index ix_transition_config_trigger on transition_config(config_id, trigger);

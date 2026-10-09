@@ -1,5 +1,8 @@
 # Gradle
 .gradle/
+# Локальный Gradle home внутри проекта (задаётся через GRADLE_USER_HOME). Содержит кэши,
+# демоны и скачанные JDK — сотни мегабайт, к репозиторию отношения не имеют.
+.gradle-home/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 !gradle/wrapper/gradle-wrapper.properties

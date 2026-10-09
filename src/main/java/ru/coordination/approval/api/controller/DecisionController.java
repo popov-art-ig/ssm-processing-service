@@ -15,11 +15,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import ru.coordination.approval.api.dto.decision.DecideRequest;
 import ru.coordination.approval.api.dto.decision.DecisionDto;
-import ru.coordination.approval.api.exception.EntityNotFoundException;
 import ru.coordination.approval.api.exception.ErrorResponse;
 import ru.coordination.approval.api.mapper.DecisionMapper;
+import ru.coordination.approval.api.service.DecisionQueryService;
 import ru.coordination.approval.domain.process.Decision;
-import ru.coordination.approval.domain.process.DecisionRepository;
 
 @RestController
 @RequestMapping("/api/v1/processes/{processId}/stages/{stageId}/participants/{participantId}")
@@ -27,7 +26,7 @@ import ru.coordination.approval.domain.process.DecisionRepository;
 @Tag(name = "Decisions", description = "API для принятия решений участниками")
 public class DecisionController {
 
-    private final DecisionRepository decisionRepository;
+    private final DecisionQueryService decisionQueryService;
     private final DecisionMapper decisionMapper;
 
     @PostMapping("/decide")
@@ -49,8 +48,14 @@ public class DecisionController {
             @Parameter(description = "ID участника", required = true)
             @PathVariable UUID participantId,
             @Valid @RequestBody DecideRequest request) {
-        // TODO: Implement decision making
-        throw new UnsupportedOperationException("Not implemented yet");
+        Decision decision = decisionQueryService.decide(
+                processId,
+                stageId,
+                participantId,
+                request.decision(),
+                request.comment(),
+                request.actorId());
+        return ResponseEntity.ok(decisionMapper.toDto(decision));
     }
 
     @GetMapping("/decision")
@@ -65,8 +70,7 @@ public class DecisionController {
     public ResponseEntity<DecisionDto> getDecision(
             @Parameter(description = "ID участника", required = true)
             @PathVariable UUID participantId) {
-        Decision decision = decisionRepository.findById(participantId)
-                .orElseThrow(() -> new EntityNotFoundException("Decision not found for participant: " + participantId));
+        Decision decision = decisionQueryService.getByParticipantId(participantId);
         return ResponseEntity.ok(decisionMapper.toDto(decision));
     }
 }

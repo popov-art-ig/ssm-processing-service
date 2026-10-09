@@ -23,13 +23,22 @@ import ru.coordination.approval.domain.template.SlotType;
 import ru.coordination.approval.domain.template.StageTemplate;
 import ru.coordination.approval.domain.template.Template;
 import ru.coordination.approval.domain.template.TemplateRepository;
-import ru.coordination.approval.dto.EntitySnapshot;
-import ru.coordination.approval.dto.RouteGenerationRequest;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
+import ru.coordination.approval.dto.generation.RouteGenerationRequest;
 import ru.coordination.approval.exception.TemplateNotFoundException;
 
 @Service
 @RequiredArgsConstructor
 public class RouteGenerationService {
+
+    /**
+     * Начальный статус {@code ProcessInstance}. Должен совпадать с {@code from_state} перехода
+     * {@code StartProcess} и {@code is_initial = true} в {@code state_config} для PROCESS
+     * (миграция {@code V18__seed_start_process_transition.sql}). Ранее здесь стояло значение
+     * {@code "Pending"}, из-за чего созданный процесс не мог быть запущен —
+     * {@code TransitionEngine} не находил переход из состояния {@code Pending}.
+     */
+    static final String INITIAL_PROCESS_STATUS = "Draft";
 
     private final TemplateRepository templateRepository;
     private final ProcessRepository processRepository;
@@ -46,16 +55,31 @@ public class RouteGenerationService {
                 request.entityId()
         );
 
-        // 2. Select template
+        return generateRoute(request, entitySnapshot);
+    }
+
+    /**
+     * Генерация маршрута по уже готовому снимку сущности.
+     *
+     * <p>Отдельная перегрузка нужна вызывающему коду, который получил атрибуты сущности не от
+     * {@link EntityAdapter}, а из собственного запроса (например,
+     * {@code POST /api/v1/processes} принимает {@code attributes} в теле). Без неё
+     * {@code EntityAdapterStub} подменял бы реальные атрибуты запроса своими (см. аудит,
+     * дефект «атрибуты запроса игнорируются при подборе шаблона»).
+     */
+    @Transactional
+    public ProcessInstance generateRoute(RouteGenerationRequest request, EntitySnapshot entitySnapshot) {
+        // 1. Select template
         Template template = selectTemplate(request.templateId(), entitySnapshot);
 
-        // 3. Generate route
+        // 2. Generate route
         ProcessInstance process = buildProcess(template, request, entitySnapshot);
 
-        // 4. Validate
-        routeValidatorService.validate(process);
+        // 3. Validate — со сверкой обязательных слотов именно этого шаблона,
+        // иначе необязательные слоты ошибочно считаются незаполненными обязательными.
+        routeValidatorService.validate(process, template.getStages());
 
-        // 5. Save
+        // 4. Save
         return processRepository.save(process);
     }
 
@@ -79,12 +103,16 @@ public class RouteGenerationService {
         Instant now = Instant.now();
 
         ProcessInstance process = ProcessInstance.builder()
+                // BaseEntity объявляет @Id без @GeneratedValue (id генерирует приложение),
+                // поэтому id обязан быть проставлен до save(): иначе Hibernate падает с
+                // "Identifier of entity ... must be manually assigned before calling 'persist()'".
+                .id(UUID.randomUUID())
                 .entityType(request.entityType())
                 .entityId(request.entityId())
                 .templateRef(template.getId())
                 .processType(template.getProcessType())
                 .configVersion(1)
-                .status("Pending")
+                .status(INITIAL_PROCESS_STATUS)
                 .initiatorId(request.initiatorId())
                 .createdAt(now)
                 .stages(new ArrayList<>())
@@ -96,12 +124,22 @@ public class RouteGenerationService {
             currentDueDate = currentDueDate.plus(stageTemplate.getDuration(), ChronoUnit.DAYS);
 
             StageInstance stage = StageInstance.builder()
+                    // id задаёт приложение (BaseEntity без @GeneratedValue) — см. комментарий выше.
+                    .id(UUID.randomUUID())
                     .process(process)
                     .orderIdx(stageTemplate.getOrderIdx())
                     .originalOrderIdx(stageTemplate.getOrderIdx())
+                    .name(stageTemplate.getName())
+                    .description(stageTemplate.getDescription())
                     .stageType(stageTemplate.getStageType())
                     .duration(stageTemplate.getDuration())
                     .executionOrder(stageTemplate.getExecutionOrder())
+                    // Ранее mandatory/orderMandatory/allowedReturnStages не переносились из шаблона,
+                    // из-за чего AllMandatorySlotsFilledGuard не видел обязательных этапов и
+                    // возврат на этап терял список допустимых целей (находка аудита).
+                    .mandatory(stageTemplate.isMandatory())
+                    .orderMandatory(stageTemplate.isOrderMandatory())
+                    .allowedReturnStages(stageTemplate.getAllowedReturnStages())
                     .decisionMode(stageTemplate.getDecisionMode() != null
                             ? stageTemplate.getDecisionMode()
                             : DecisionMode.AND)
@@ -113,8 +151,12 @@ public class RouteGenerationService {
 
             // Create initial iteration
             StageIteration iteration = StageIteration.builder()
+                    .id(UUID.randomUUID())
                     .stage(stage)
                     .iterationIdx(1)
+                    // started_at объявлен NOT NULL в схеме (V4__stages_and_iterations.sql):
+                    // начальная итерация создаётся сразу активной, поэтому время старта обязательно.
+                    .startedAt(now)
                     .status("Pending")
                     .createdAt(now)
                     .participants(new ArrayList<>())
@@ -150,6 +192,8 @@ public class RouteGenerationService {
 
             for (UUID userId : userIds) {
                 Participant participant = Participant.builder()
+                        // id задаёт приложение (BaseEntity без @GeneratedValue) — см. buildProcess.
+                        .id(UUID.randomUUID())
                         .stageIteration(iteration)
                         .userId(userId)
                         .role(mapSlotTypeToRole(slot.getSlotType()))

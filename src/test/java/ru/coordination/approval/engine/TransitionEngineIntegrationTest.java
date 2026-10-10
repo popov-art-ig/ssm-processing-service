@@ -43,7 +43,7 @@ import ru.coordination.approval.engine.testsupport.RecordingAction;
  * → сущность в БД имеет новый {@code status}, создан {@code AuditEvent}; плюс оптимистичная
  * блокировка (критерий приёмки 5).
  */
-@SpringBootTest(properties = "spring.flyway.locations=classpath:db/migration,classpath:db/test-migration")
+@SpringBootTest
 @ActiveProfiles("test")
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class TransitionEngineIntegrationTest {
@@ -118,7 +118,11 @@ class TransitionEngineIntegrationTest {
                 .id(UUID.randomUUID())
                 .version(1)
                 .entityType(ENTITY_TYPE)
-                .status(LifecycleStatus.PUBLISHED)
+                // DRAFT, а не PUBLISHED: карта синтетическая, в ней тестовые guard/action и
+                // событие IT_EVT_APPROVED вне контракта событий. Публикация означала бы, что
+                // такая карта прошла валидацию TransitionMapValidator, — это неверно, и на
+                // общей БД Testcontainers она ломала бы проверки опубликованных карт.
+                .status(LifecycleStatus.DRAFT)
                 .activeProcessCount(0)
                 .createdAt(now)
                 .createdBy(UUID.randomUUID())

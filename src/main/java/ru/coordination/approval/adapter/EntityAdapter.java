@@ -1,7 +1,7 @@
 package ru.coordination.approval.adapter;
 
 import java.util.UUID;
-import ru.coordination.approval.dto.EntitySnapshot;
+import ru.coordination.approval.dto.generation.EntitySnapshot;
 
 /**
  * Adapter for fetching entity data from external systems.

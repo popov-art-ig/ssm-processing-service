@@ -1,0 +1,18 @@
+# Профиль "test": интеграционные тесты на Testcontainers.
+#
+# datasource.url вида jdbc:tc:... запускает контейнер PostgreSQL автоматически
+# (Testcontainers JDBC driver). Схема создаётся Flyway, Hibernate её только валидирует
+# (ddl-auto=validate в application.yml), поэтому набор локаций обязан совпадать с тем,
+# что ожидают JPA-сущности.
+#
+# ВАЖНО: локации включают db/test-migration, потому что тестовые наборы поднимают сущность
+# EngineTestTarget (src/test/.../engine/testsupport), которой соответствует таблица
+# engine_test_target из V900. Раньше локации задавались точечно через
+# properties = "spring.flyway.locations=..." только в части тестовых классов: классы без
+# этого свойства получали схему без engine_test_target и падали на старте с
+# "Schema validation: missing table [engine_test_target]".
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16-alpine:///coordination_test
+  flyway:
+    locations: classpath:db/migration,classpath:db/test-migration

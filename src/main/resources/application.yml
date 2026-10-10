@@ -59,9 +59,6 @@ spring:
     show-sql: true
 
 ---
-spring:
-  config:
-    activate:
-      on-profile: test
-  datasource:
-    url: jdbc:tc:postgresql:16-alpine:///coordination_test
+# Профиль "test" описан в src/test/resources/application-test.yml: он принадлежит тестовому
+# classpath, а не продакшн-артефакту (ранее datasource тестов задавался здесь и частично
+# дублировался свойствами отдельных тестовых классов).

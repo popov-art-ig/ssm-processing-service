@@ -81,8 +81,8 @@ public class ActivateNextStageAction implements Action {
 
         if (!result.performed()) {
             throw new IllegalStateException(
-                    "Failed to activate next stage %s (orderIdx=%d)"
-                            .formatted(nextStage.getId(), nextStage.getOrderIdx()));
+                    "Failed to activate next stage %s (orderIdx=%d, status=%s): no transition performed"
+                            .formatted(nextStage.getId(), nextStage.getOrderIdx(), nextStage.getStatus()));
         }
     }
 }

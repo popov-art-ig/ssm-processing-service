@@ -63,6 +63,15 @@ public class DecisionService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Participant not found: " + participantId));
 
+        // Явное предусловие вместо молчаливого notPerformed: переход Decide объявлен только из
+        // состояния Assigned, поэтому решение от участника в другом статусе раньше приводило к
+        // NoApplicableTransitionException с неинформативным текстом либо к тихому отказу.
+        if (!"Assigned".equals(participant.getStatus())) {
+            throw new IllegalStateException(
+                    "Participant %s is not assigned and cannot decide (status=%s)"
+                            .formatted(participantId, participant.getStatus()));
+        }
+
         // 4. Резолвить configId для PARTICIPANT state machine
         StateMachineConfig participantConfig = stateMachineConfigRepository
                 .findByEntityTypeAndProcessTypeAndVersion(
@@ -73,10 +82,13 @@ public class DecisionService {
                         "Participant state machine config not found for processType=%s, version=%d"
                                 .formatted(process.getProcessType(), process.getConfigVersion())));
 
-        // 5. Собрать TransitionContext с decisionType и comment в parameters
-        Map<String, Object> parameters = Map.of(
-                "decisionType", decisionType,
-                "comment", comment != null ? comment : "");
+        // 5. Собрать TransitionContext с decisionType и comment в parameters.
+        // Комментарий кладётся только при наличии: ранее null подменялся пустой строкой, из-за
+        // чего в decision.comment попадало "" вместо NULL и терялось различие
+        // «комментарий не указан» / «указан пустой» (находка сборки).
+        Map<String, Object> parameters = comment == null
+                ? Map.of("decisionType", decisionType)
+                : Map.of("decisionType", decisionType, "comment", comment);
 
         TransitionContext context = new TransitionContext(
                 participant,

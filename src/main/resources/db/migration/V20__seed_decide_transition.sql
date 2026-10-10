@@ -7,10 +7,15 @@ values
     ('IsAssignedParticipant', 'Участник назначен', 'Текущий пользователь — назначенный участник с правом принять решение (G-PA-001)', 'isAssignedParticipantGuard', 'GLOBAL', '{VALIDATION}', '{PARTICIPANT}', true, now(), now());
 
 -- action_registry (08_db_schema.md §16.2)
+-- EvaluateAggregation зарегистрирован здесь (а не в V21) намеренно: V21 добавляет его в actions
+-- перехода Decide, но применяется РАНЬШЕ V20 и на тот момент перехода ещё не существует —
+-- UPDATE затрагивал 0 строк, и агрегация решений не запускалась (этап не закрывался,
+-- процесс не завершался). Реестр и переход описаны в одной миграции.
 insert into action_registry (code, display_name, description, handler, scope, categories, applicable_entities, is_active, created_at, updated_at)
 values
     ('RecordDecision', 'Записать решение', 'Записывает решение участника в таблицу decision (A-PA-001)', 'recordDecisionAction', 'GLOBAL', '{DATA}', '{PARTICIPANT}', true, now(), now()),
-    ('RecordComment', 'Записать комментарий', 'Записывает комментарий участника, если есть (A-PA-002)', 'recordCommentAction', 'GLOBAL', '{DATA}', '{PARTICIPANT}', true, now(), now());
+    ('RecordComment', 'Записать комментарий', 'Записывает комментарий участника, если есть (A-PA-002)', 'recordCommentAction', 'GLOBAL', '{DATA}', '{PARTICIPANT}', true, now(), now()),
+    ('EvaluateAggregation', 'Оценить агрегацию решений', 'Проверяет все решения участников и программно запускает переход этапа (A-S-004)', 'evaluateAggregationAction', 'GLOBAL', '{ORCHESTRATION}', '{PARTICIPANT}', true, now(), now());
 
 -- status_registry (08_db_schema.md §5.1) — коды состояний ParticipantStateMachine
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
@@ -24,7 +29,7 @@ values ('11111111-0005-0000-0000-000000000001', 1, 'PARTICIPANT', 'STANDARD', 'P
 
 insert into state_config (id, config_id, code, display_name, is_initial, is_terminal, metadata, created_at)
 values
-    ('11111111-0005-0000-0000-000000000002', '11111111-0005-0000-0000-000000000001', 'Assigned', 'Назначен', false, false, '{}', now()),
+    ('11111111-0005-0000-0000-000000000002', '11111111-0005-0000-0000-000000000001', 'Assigned', 'Назначен', true, false, '{}', now()),
     ('11111111-0005-0000-0000-000000000003', '11111111-0005-0000-0000-000000000001', 'Decided', 'Решение принято', false, false, '{}', now());
 
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
@@ -32,7 +37,7 @@ values (
     '11111111-0005-0000-0000-000000000004', '11111111-0005-0000-0000-000000000001',
     'Decide', 'Assigned', 'Decided', 'USER_ACTION',
     '{IsAssignedParticipant}',
-    '{RecordDecision,RecordComment}',
+    '{RecordDecision,RecordComment,EvaluateAggregation}',
     '{approval.decision.recorded}',
     0, true, now()
 );

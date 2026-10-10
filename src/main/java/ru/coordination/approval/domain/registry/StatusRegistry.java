@@ -3,6 +3,7 @@ package ru.coordination.approval.domain.registry;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
+import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.Map;
@@ -23,6 +24,7 @@ import org.hibernate.type.SqlTypes;
  */
 @Entity
 @Table(name = "status_registry")
+@IdClass(StatusRegistryId.class)
 @Getter
 @Setter
 @NoArgsConstructor
@@ -30,11 +32,15 @@ import org.hibernate.type.SqlTypes;
 @Builder
 public class StatusRegistry {
 
-    /** Код статуса. Уникален в рамках {@link #entityType}. */
+    /**
+     * Код статуса. Уникален в рамках {@link #entityType} — ключ составной
+     * ({@link StatusRegistryId}), см. миграцию {@code V27__status_registry_composite_key.sql}.
+     */
     @Id
     @Column(name = "code", length = 100, nullable = false)
     private String code;
 
+    @Id
     @Column(name = "entity_type", length = 50, nullable = false)
     private String entityType;
 

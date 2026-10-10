@@ -13,37 +13,53 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import ru.coordination.approval.api.dto.process.*;
-import ru.coordination.approval.api.mapper.ProcessMapper;
-import ru.coordination.approval.api.service.ProcessService;
+import ru.coordination.approval.api.exception.EntityNotFoundException;
+import ru.coordination.approval.api.exception.GlobalExceptionHandler;
+import ru.coordination.approval.api.service.ProcessViewService;
 import ru.coordination.approval.domain.common.ProcessType;
+import ru.coordination.approval.domain.common.StageType;
 import ru.coordination.approval.domain.process.ProcessInstance;
-import ru.coordination.approval.domain.process.ProcessRepository;
+import ru.coordination.approval.domain.process.StageInstance;
+import ru.coordination.approval.engine.TransitionResult;
+import ru.coordination.approval.service.ProcessService;
 
+/**
+ * Web-срез тестов для {@link ProcessController}.
+ *
+ * <p>Приведён в соответствие с фактическим API сервисного слоя и Spring Boot 4.0:
+ * <ul>
+ *   <li>{@code @WebMvcTest} переехал в {@code spring-boot-webmvc-test}
+ *       ({@code org.springframework.boot.webmvc.test.autoconfigure});</li>
+ *   <li>{@code @MockBean} удалён — используется
+ *       {@code org.springframework.test.context.bean.override.mockito.MockitoBean};</li>
+ *   <li>используется {@link ProcessService} из пакета {@code service}, а не несуществовавшего
+ *       {@code api.service}.</li>
+ * </ul>
+ */
 @WebMvcTest(ProcessController.class)
+@Import(GlobalExceptionHandler.class)
 class ProcessControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
-    private ObjectMapper objectMapper;
+    // Spring Boot 4: срез @WebMvcTest больше не предоставляет Jackson 2 ObjectMapper как бин
+    // (JacksonAutoConfiguration вне среза), поэтому создаём его напрямую.
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
-    @MockBean
+    @MockitoBean
     private ProcessService processService;
 
-    @MockBean
-    private ProcessRepository processRepository;
-
-    @MockBean
-    private ProcessMapper processMapper;
+    @MockitoBean
+    private ProcessViewService processViewService;
 
     @Test
     void createProcess_success() throws Exception {
@@ -58,9 +74,8 @@ class ProcessControllerTest {
         ProcessInstance mockProcess = createMockProcess();
         ProcessDto mockDto = createMockProcessDto(mockProcess);
 
-        when(processService.createProcess(any(), any(), any(), any(), any()))
-                .thenReturn(mockProcess);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processService.createProcess(any(CreateProcessRequest.class))).thenReturn(mockProcess);
+        when(processViewService.getById(mockProcess.getId())).thenReturn(mockDto);
 
         mockMvc.perform(post("/api/v1/processes")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -73,7 +88,7 @@ class ProcessControllerTest {
     @Test
     void createProcess_invalidRequest_returns400() throws Exception {
         CreateProcessRequest request = new CreateProcessRequest(
-                "",  // пустой entityType
+                "",  // пустой entityType — нарушает @NotBlank
                 null,
                 UUID.randomUUID(),
                 Map.of(),
@@ -92,8 +107,7 @@ class ProcessControllerTest {
         ProcessInstance mockProcess = createMockProcess();
         ProcessDto mockDto = createMockProcessDto(mockProcess);
 
-        when(processService.getById(processId)).thenReturn(mockProcess);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processViewService.getById(processId)).thenReturn(mockDto);
 
         mockMvc.perform(get("/api/v1/processes/{processId}", processId))
                 .andExpect(status().isOk())
@@ -104,8 +118,8 @@ class ProcessControllerTest {
     void getProcess_notFound_returns404() throws Exception {
         UUID processId = UUID.randomUUID();
 
-        when(processService.getById(processId))
-                .thenThrow(new ru.coordination.approval.api.exception.EntityNotFoundException("Process not found"));
+        when(processViewService.getById(processId))
+                .thenThrow(new EntityNotFoundException("Process not found: " + processId));
 
         mockMvc.perform(get("/api/v1/processes/{processId}", processId))
                 .andExpect(status().isNotFound());
@@ -116,12 +130,13 @@ class ProcessControllerTest {
         UUID processId = UUID.randomUUID();
         StartProcessRequest request = new StartProcessRequest(UUID.randomUUID());
 
-        ProcessInstance mockProcess = createMockProcess();
-        mockProcess.setStatus("InProgress");
-        ProcessDto mockDto = createMockProcessDto(mockProcess);
+        ProcessInstance started = createMockProcess();
+        started.setStatus("InProgress");
+        ProcessDto mockDto = createMockProcessDto(started);
 
-        when(processService.startProcess(eq(processId), any())).thenReturn(mockProcess);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processService.startProcess(eq(processId), any()))
+                .thenReturn(TransitionResult.performed("Draft", "InProgress", "StartProcess", List.of()));
+        when(processViewService.getById(processId)).thenReturn(mockDto);
 
         mockMvc.perform(post("/api/v1/processes/{processId}/start", processId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -133,14 +148,15 @@ class ProcessControllerTest {
     @Test
     void recallProcess_success() throws Exception {
         UUID processId = UUID.randomUUID();
-        RecallProcessRequest request = new RecallProcessRequest(UUID.randomUUID());
+        RecallProcessRequest request = new RecallProcessRequest(UUID.randomUUID(), "Обнаружены ошибки");
 
-        ProcessInstance mockProcess = createMockProcess();
-        mockProcess.setStatus("Recalled");
-        ProcessDto mockDto = createMockProcessDto(mockProcess);
+        ProcessInstance recalled = createMockProcess();
+        recalled.setStatus("Recalled");
+        ProcessDto mockDto = createMockProcessDto(recalled);
 
-        when(processService.recall(eq(processId), any())).thenReturn(mockProcess);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processService.recall(eq(processId), any(), any()))
+                .thenReturn(TransitionResult.performed("InProgress", "Recalled", "RecallProcess", List.of()));
+        when(processViewService.getById(processId)).thenReturn(mockDto);
 
         mockMvc.perform(post("/api/v1/processes/{processId}/recall", processId)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -152,18 +168,34 @@ class ProcessControllerTest {
     @Test
     void resumeProcess_success() throws Exception {
         UUID processId = UUID.randomUUID();
-        ResumeProcessRequest request = new ResumeProcessRequest(UUID.randomUUID(), UUID.randomUUID());
+        UUID targetStageId = UUID.randomUUID();
 
-        ProcessInstance mockProcess = createMockProcess();
-        mockProcess.setStatus("InProgress");
-        ProcessDto mockDto = createMockProcessDto(mockProcess);
+        ProcessInstance process = createMockProcess();
+        process.setStatus("InProgress");
+        // Контракт resume оперирует targetStageId, а TransitionEngine — orderIdx целевого этапа,
+        // поэтому контроллер восстанавливает индекс по этапу процесса: этап должен существовать.
+        StageInstance targetStage = StageInstance.builder()
+                .id(targetStageId)
+                .process(process)
+                .orderIdx(1)
+                .originalOrderIdx(1)
+                .stageType(StageType.APPROVAL)
+                .duration(3)
+                .status("Pending")
+                .createdAt(Instant.now())
+                .build();
+        process.getStages().add(targetStage);
+        ProcessDto mockDto = createMockProcessDto(process);
 
-        when(processService.resume(eq(processId), any(), any())).thenReturn(mockProcess);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processService.getById(processId)).thenReturn(process);
+        when(processService.resume(eq(processId), any(), any()))
+                .thenReturn(TransitionResult.performed("OnRework", "InProgress", "ResumeProcess", List.of()));
+        when(processViewService.getById(processId)).thenReturn(mockDto);
 
         mockMvc.perform(post("/api/v1/processes/{processId}/resume", processId)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+                        .content(objectMapper.writeValueAsString(
+                                new ResumeProcessRequest(targetStageId, UUID.randomUUID()))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("InProgress"));
     }
@@ -172,11 +204,10 @@ class ProcessControllerTest {
     void listProcesses_withFilters_success() throws Exception {
         ProcessInstance mockProcess = createMockProcess();
         ProcessDto mockDto = createMockProcessDto(mockProcess);
-        Page<ProcessInstance> mockPage = new PageImpl<>(List.of(mockProcess));
         Page<ProcessDto> dtoPage = new PageImpl<>(List.of(mockDto));
 
-        when(processRepository.findAll(any(Pageable.class))).thenReturn(mockPage);
-        when(processMapper.toDto(mockProcess)).thenReturn(mockDto);
+        when(processViewService.list(eq("InProgress"), any(), any(), eq(0), eq(20)))
+                .thenReturn(dtoPage);
 
         mockMvc.perform(get("/api/v1/processes")
                         .param("status", "InProgress")
@@ -188,7 +219,7 @@ class ProcessControllerTest {
     }
 
     private ProcessInstance createMockProcess() {
-        ProcessInstance process = ProcessInstance.builder()
+        return ProcessInstance.builder()
                 .id(UUID.randomUUID())
                 .entityType("CONTRACT")
                 .entityId(UUID.randomUUID())
@@ -197,7 +228,6 @@ class ProcessControllerTest {
                 .initiatorId(UUID.randomUUID())
                 .createdAt(Instant.now())
                 .build();
-        return process;
     }
 
     private ProcessDto createMockProcessDto(ProcessInstance process) {

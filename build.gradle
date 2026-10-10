@@ -67,6 +67,16 @@ dependencies {
     testAnnotationProcessor 'org.projectlombok:lombok'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    // Spring Boot 4.0: spring-boot-starter-test больше не тянет web-срез тестов и TestRestTemplate —
+    // @WebMvcTest/MockMvc вынесены в spring-boot-webmvc-test, TestRestTemplate — в
+    // spring-boot-resttestclient (см. ADR-029 в doc/arch/11_adr.md).
+    testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
+    testImplementation 'org.springframework.boot:spring-boot-resttestclient'
+    // TestRestTemplate из spring-boot-resttestclient зависит от ClientHttpRequestFactoryBuilder
+    // (модуль spring-boot-http-client) и RestTemplateBuilder (spring-boot-restclient) —
+    // эти модули не приходят транзитивно.
+    testImplementation 'org.springframework.boot:spring-boot-http-client'
+    testImplementation 'org.springframework.boot:spring-boot-restclient'
     testImplementation 'org.springframework.amqp:spring-rabbit-test'
     testImplementation 'org.testcontainers:junit-jupiter'
     testImplementation 'org.testcontainers:postgresql'
@@ -78,4 +88,23 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+// Обязательная компиляция тестового кода.
+//
+// Мотивация (аудит 2026-10-06): пять тестовых классов были закоммичены без компиляции —
+// они ссылались на несуществующие сервисы, удалённые в Spring Boot 4.0 аннотации
+// (@WebMvcTest/@MockBean) и методы доменных билдеров, которых нет. `./gradlew build` падал
+// на :compileTestJava, то есть тесты не запускались вообще, а README при этом заявлял
+// зелёную сборку. Задача ниже выносит компиляцию тестов в отдельный адресуемый шаг, который
+// можно запускать в CI за секунды, без поднятия Docker и Testcontainers:
+//
+//     ./gradlew compileTestJava
+//
+// Сам :compileTestJava уже является зависимостью :test, поэтому отдельного «enforcement»
+// здесь не требуется — важно, что теперь это документированная и проверяемая точка.
+tasks.register('verifyTestCompilation') {
+    group = 'verification'
+    description = 'Компилирует main и test без запуска тестов (быстрая проверка в CI, не требует Docker).'
+    dependsOn tasks.named('compileTestJava')
 }

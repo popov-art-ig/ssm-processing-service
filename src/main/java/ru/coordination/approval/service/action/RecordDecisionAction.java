@@ -1,6 +1,7 @@
 package ru.coordination.approval.service.action;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import ru.coordination.approval.domain.process.Decision;
@@ -23,6 +24,11 @@ public class RecordDecisionAction implements Action {
         String comment = (String) context.parameters().get("comment");
 
         Decision decision = Decision.builder()
+                // BaseEntity намеренно объявляет @Id без @GeneratedValue (генерирует приложение),
+                // поэтому id обязан быть проставлен до save(): иначе Hibernate падает с
+                // "Identifier of entity ... must be manually assigned before calling 'persist()'".
+                // Это ломало все сценарии принятия решения (находка сборки).
+                .id(UUID.randomUUID())
                 .participant(participant)
                 .result(decisionResult)
                 .comment(comment)

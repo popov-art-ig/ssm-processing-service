@@ -19,7 +19,11 @@ public class AllDurationsValidGuard implements Guard {
 
     @Override
     public boolean evaluate(TransitionContext context) {
-        ProcessInstance process = (ProcessInstance) context.entity();
+        // Guard процессного уровня: при вызове из перехода уровня STAGE возвращаем false,
+        // а не падаем с ClassCastException.
+        if (!(context.entity() instanceof ProcessInstance process)) {
+            return false;
+        }
         return process.getStages().stream()
                 .allMatch(stage -> stage.getDuration() != null && stage.getDuration() > 0);
     }

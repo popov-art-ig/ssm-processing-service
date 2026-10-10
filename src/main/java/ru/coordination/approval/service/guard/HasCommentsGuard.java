@@ -1,8 +1,10 @@
 package ru.coordination.approval.service.guard;
 
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import ru.coordination.approval.domain.process.ProcessInstance;
+import ru.coordination.approval.domain.process.StageRepository;
 import ru.coordination.approval.engine.TransitionContext;
 import ru.coordination.approval.engine.registry.Guard;
 
@@ -19,16 +21,25 @@ import ru.coordination.approval.engine.registry.Guard;
  * если хотя бы один этап завершён как {@code ApprovedWithComments} → процесс переходит в
  * {@code ApprovedWithComments}, иначе (все этапы {@code Approved}) → процесс переходит в
  * {@code Approved}.
+ *
+ * <p>Статусы читаются из {@link StageRepository}, а не из {@code process.getStages()}:
+ * guard вызывается из {@code EvaluateProcessCompletionAction} внутри перехода закрытия этапа,
+ * и в памяти закрываемый этап мог ещё числиться {@code Active} — тогда процесс завершался как
+ * {@code Approved}, теряя признак «с замечаниями».
  */
 @Component("hasCommentsGuard")
 @RequiredArgsConstructor
 public class HasCommentsGuard implements Guard {
 
+    private final StageRepository stageRepository;
+
     @Override
     public boolean evaluate(TransitionContext context) {
-        ProcessInstance process = (ProcessInstance) context.entity();
+        if (!(context.entity() instanceof ProcessInstance process)) {
+            return false;
+        }
 
-        return process.getStages().stream()
-                .anyMatch(stage -> "ApprovedWithComments".equals(stage.getStatus()));
+        List<String> statuses = stageRepository.findStatusesByProcessId(process.getId());
+        return statuses.stream().anyMatch("ApprovedWithComments"::equals);
     }
 }

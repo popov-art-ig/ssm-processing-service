@@ -40,13 +40,12 @@ class EvaluateProcessCompletionActionTest {
     void setUp() {
         stateMachineConfigRepository = mock(StateMachineConfigRepository.class);
         transitionEngine = mock(TransitionEngine.class);
-        action = new EvaluateProcessCompletionAction(stateMachineConfigRepository, transitionEngine);
-    }
+        action = new EvaluateProcessCompletionAction(stateMachineConfigRepository, transitionEngine);    }
 
     @Test
     void triggersProcessTransitionWhenAllStagesCompleted() {
         ProcessInstance process = createProcessWithStages("Approved", "Approved", "Approved");
-        StageInstance stage = process.getStages().get(0);
+        StageInstance stage = lastStage(process);
 
         StateMachineConfig processConfig = createProcessConfig();
         when(stateMachineConfigRepository.findByEntityTypeAndProcessTypeAndVersion(
@@ -86,7 +85,9 @@ class EvaluateProcessCompletionActionTest {
     @Test
     void doesNothingWhenNotAllStagesCompleted() {
         ProcessInstance process = createProcessWithStages("Approved", "Active", "Pending");
-        StageInstance stage = process.getStages().get(0);
+        // Проверка запускается для последнего этапа, но предыдущие ещё не завершены:
+        // переход процесса не выполняется.
+        StageInstance stage = lastStage(process);
 
         StateMachineConfig processConfig = createProcessConfig();
         when(stateMachineConfigRepository.findByEntityTypeAndProcessTypeAndVersion(
@@ -107,21 +108,15 @@ class EvaluateProcessCompletionActionTest {
 
         action.execute(context);
 
-        verify(transitionEngine)
-                .transition(
-                        eq(EntityType.PROCESS),
-                        eq(process.getId()),
-                        eq(processConfig.getId()),
-                        eq("InProgress"),
-                        eq(TriggerType.SYSTEM_ACTION),
-                        any(TransitionContext.class),
-                        any(Consumer.class));
+        verify(transitionEngine, never()).transition(
+                eq(EntityType.PROCESS), eq(process.getId()), eq(processConfig.getId()),
+                eq("Approved"), any(), any(), any());
     }
 
     @Test
     void throwsExceptionWhenProcessConfigNotFound() {
         ProcessInstance process = createProcessWithStages("Approved", "Approved", "Approved");
-        StageInstance stage = process.getStages().get(0);
+        StageInstance stage = lastStage(process);
 
         when(stateMachineConfigRepository.findByEntityTypeAndProcessTypeAndVersion(
                         EntityType.PROCESS, ProcessType.STANDARD, 1))
@@ -168,6 +163,30 @@ class EvaluateProcessCompletionActionTest {
                         eq(TriggerType.SYSTEM_ACTION),
                         any(TransitionContext.class),
                         any(Consumer.class));
+    }
+
+    /**
+     * Завершённость процесса оценивается только после закрытия ПОСЛЕДНЕГО этапа маршрута —
+     * для промежуточного этапа action выходит сразу, не обращаясь ни к конфигу, ни к движку.
+     */
+    private StageInstance lastStage(ProcessInstance process) {
+        return process.getStages().stream()
+                .max(java.util.Comparator.comparing(StageInstance::getOrderIdx))
+                .orElseThrow();
+    }
+
+    @Test
+    void doesNothingForIntermediateStageWithoutTouchingEngine() {
+        ProcessInstance process = createProcessWithStages("Approved", "Active", "Pending");
+        StageInstance intermediate = process.getStages().get(0);
+
+        TransitionContext context =
+                new TransitionContext(intermediate, UUID.randomUUID(), ActorType.SYSTEM, Map.of());
+
+        action.execute(context);
+
+        verify(transitionEngine, never()).transition(
+                any(), any(), any(), any(), any(), any(), any());
     }
 
     private ProcessInstance createProcessWithStages(String... statuses) {

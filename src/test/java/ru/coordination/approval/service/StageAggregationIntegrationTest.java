@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 import ru.coordination.approval.domain.common.DecisionMode;
 import ru.coordination.approval.domain.common.ExecutionOrder;
 import ru.coordination.approval.domain.common.LifecycleStatus;
@@ -31,6 +32,7 @@ import ru.coordination.approval.domain.template.TemplateRepository;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Transactional
 class StageAggregationIntegrationTest {
 
     @Autowired
@@ -67,8 +69,13 @@ class StageAggregationIntegrationTest {
                 .getStages().get(0);
         assertThat(stage.getStatus()).isEqualTo("Approved");
 
+        // Фикстура содержит ОДИН этап, поэтому после его согласования процесс завершается:
+        // EvaluateProcessCompletionAction запускается для последнего этапа маршрута и
+        // AllStagesCompletedGuard подтверждает завершённость. Проверка агрегации как таковой —
+        // в assertions выше (статус этапа), а «процесс ещё InProgress» относится к маршрутам
+        // из нескольких этапов — см. ProcessCompletionIntegrationTest.
         ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("InProgress");
+        assertThat(process.getStatus()).isEqualTo("Approved");
     }
 
     @Test
@@ -84,8 +91,11 @@ class StageAggregationIntegrationTest {
                 .getStages().get(0);
         assertThat(stage.getStatus()).isEqualTo("OnRework");
 
+        // Этап ушёл на доработку => процесс автоматически переводится в OnRework
+        // (ProcessRework, guard HasStageOnRework). Ранее ожидался InProgress: до исправления
+        // порядка «статус -> actions» guard не видел этап в статусе OnRework.
         ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("InProgress");
+        assertThat(process.getStatus()).isEqualTo("OnRework");
     }
 
     @Test
@@ -101,8 +111,9 @@ class StageAggregationIntegrationTest {
                 .getStages().get(0);
         assertThat(stage.getStatus()).isEqualTo("ApprovedWithComments");
 
+        // Один этап в фикстуре => процесс завершается (см. комментарий в andModeWithAllApprove).
         ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("InProgress");
+        assertThat(process.getStatus()).isEqualTo("ApprovedWithComments");
     }
 
     @Test

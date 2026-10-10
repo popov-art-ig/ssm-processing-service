@@ -55,7 +55,7 @@ class RemarkLifecycleIntegrationTest {
                 "Исправить опечатку в пункте 2.3",
                 authorId);
 
-        assertThat(remark.getStatus()).isEqualTo("Open");
+        assertThat(remark.getStatus()).isEqualTo("Active");
         assertThat(remark.getActivatedBy()).isEqualTo(authorId);
         assertThat(remark.getActivatedAt()).isNotNull();
         assertThat(remark.getText()).isEqualTo("Исправить опечатку в пункте 2.3");
@@ -83,7 +83,7 @@ class RemarkLifecycleIntegrationTest {
                 "Неактуально",
                 authorId);
 
-        assertThat(remark.getStatus()).isEqualTo("Open");
+        assertThat(remark.getStatus()).isEqualTo("Active");
 
         TransitionResult rejectResult = remarkService.rejectRemark(
                 remark.getId(),
@@ -117,7 +117,7 @@ class RemarkLifecycleIntegrationTest {
         assertThat(processResult.performed()).isFalse();
 
         remark = remarkRepository.findById(remark.getId()).orElseThrow();
-        assertThat(remark.getStatus()).isEqualTo("Open");
+        assertThat(remark.getStatus()).isEqualTo("Active");
     }
 
     @Test
@@ -141,7 +141,7 @@ class RemarkLifecycleIntegrationTest {
         assertThat(rejectResult.performed()).isFalse();
 
         remark = remarkRepository.findById(remark.getId()).orElseThrow();
-        assertThat(remark.getStatus()).isEqualTo("Open");
+        assertThat(remark.getStatus()).isEqualTo("Active");
     }
 
     private ProcessInstance createProcess(UUID initiatorId) {

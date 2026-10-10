@@ -2,11 +2,13 @@ package ru.coordination.approval.service.action;
 
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import ru.coordination.approval.domain.audit.ActorType;
 import ru.coordination.approval.domain.common.EntityType;
 import ru.coordination.approval.domain.process.Participant;
 import ru.coordination.approval.domain.process.StageInstance;
+import ru.coordination.approval.domain.process.StageRepository;
 import ru.coordination.approval.domain.statemachine.StateMachineConfig;
 import ru.coordination.approval.domain.statemachine.TriggerType;
 import ru.coordination.approval.engine.TransitionContext;
@@ -33,16 +35,27 @@ import ru.coordination.approval.engine.registry.Action;
  * приняли решение (guard {@code AllParticipantsDecided}).
  */
 @Component("evaluateAggregationAction")
+@Slf4j
 @RequiredArgsConstructor
 public class EvaluateAggregationAction implements Action {
 
     private final StateMachineConfigRepository stateMachineConfigRepository;
     private final TransitionEngine transitionEngine;
+    private final StageRepository stageRepository;
 
     @Override
     public void execute(TransitionContext context) {
         Participant participant = (Participant) context.entity();
         StageInstance stage = participant.getStageIteration().getStage();
+
+        // Статус этапа читается из репозитория, а не из навигации по участнику: экземпляр
+        // StageInstance, полученный через participant -> stageIteration -> stage, может быть
+        // устаревшим (в кэше сессии он остался в статусе до активации — например Pending).
+        // Из-за этого переход выполнялся «из Pending», кандидатов не находилось, и агрегация
+        // молча не срабатывала: этап никогда не закрывался.
+        String currentStageStatus = stageRepository.findById(stage.getId())
+                .map(StageInstance::getStatus)
+                .orElse(stage.getStatus());
 
         StateMachineConfig stageConfig = stateMachineConfigRepository
                 .findByEntityTypeAndProcessTypeAndVersion(
@@ -62,12 +75,16 @@ public class EvaluateAggregationAction implements Action {
                 EntityType.STAGE,
                 stage.getId(),
                 stageConfig.getId(),
-                stage.getStatus(),
+                currentStageStatus,
                 TriggerType.SYSTEM_ACTION,
                 stageContext,
                 stage::setStatus);
 
         // Если ни один переход не выполнен (AllParticipantsDecided ещё false) — это нормально,
         // агрегация вызывается после каждого решения, но срабатывает только когда все решили
+        if (!result.performed()) {
+            log.debug("aggregation transition not performed for stage {} (status={})",
+                    stage.getId(), currentStageStatus);
+        }
     }
 }

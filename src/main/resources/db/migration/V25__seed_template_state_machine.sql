@@ -27,14 +27,15 @@ values
     ('SetArchivedTimestamp', 'Установить время архивации', 'Устанавливает updatedAt при архивации (PHASE-14)', 'setArchivedTimestamp', 'GLOBAL', '{DATA}', '{TEMPLATE}', true, now(), now())
 on conflict (code) do nothing;
 
--- 4. status_registry — статусы TEMPLATE (коды совпадают с LifecycleStatus enum)
+-- 4. status_registry — статусы TEMPLATE (коды совпадают с LifecycleStatus enum).
+-- PK составной (code, entity_type) — V1.
 insert into status_registry (code, entity_type, display_name, is_terminal, is_active, created_at, updated_at)
 values
     ('DRAFT', 'TEMPLATE', 'Черновик', false, true, now(), now()),
     ('PUBLISHED', 'TEMPLATE', 'Опубликован', false, true, now(), now()),
     ('DEPRECATED', 'TEMPLATE', 'Снят с публикации', false, true, now(), now()),
     ('ARCHIVED', 'TEMPLATE', 'Архивирован', true, true, now(), now())
-on conflict (code) do nothing;
+on conflict (code, entity_type) do nothing;
 
 -- 5. state_machine_config для TEMPLATE (process_type = NULL — шаблоны обоих типов процессов)
 insert into state_machine_config (id, version, entity_type, process_type, status, active_process_count, created_at, created_by, published_at, published_by, updated_at, version_lock)
@@ -51,7 +52,13 @@ values
     ('11111111-0014-0000-0000-000000000005', '11111111-0014-0000-0000-000000000001', 'ARCHIVED', 'Архивирован', false, true, '{}', now())
 on conflict do nothing;
 
--- 7. transition_config — переходы жизненного цикла шаблона
+-- 7. transition_config — переходы жизненного цикла шаблона.
+--
+-- События взяты из контракта 06_event_contract.md §17 (approval.config.published /
+-- approval.config.deprecated). Для архивации шаблона события в контракте нет, поэтому emits
+-- оставлен пустым осознанно: изобретать несуществующий тип события нельзя — проверка
+-- EVENT_UNKNOWN его отвергнет. Если событие архивации понадобится, его следует сначала
+-- добавить в 06_event_contract.md, а затем проставить здесь.
 insert into transition_config (id, config_id, code, from_state, to_state, trigger, guards, actions, emits, priority, is_active, created_at)
 values
     (
@@ -59,7 +66,7 @@ values
         'PublishTemplate', 'DRAFT', 'PUBLISHED', 'USER_ACTION',
         '{AllMandatorySlotsValid}',
         '{ValidateTemplateStructure,SetPublishedTimestamp}',
-        '{template.published}',
+        '{approval.config.published}',
         0, true, now()
     ),
     (
@@ -67,7 +74,7 @@ values
         'DeprecateTemplate', 'PUBLISHED', 'DEPRECATED', 'USER_ACTION',
         '{}',
         '{}',
-        '{template.deprecated}',
+        '{approval.config.deprecated}',
         0, true, now()
     ),
     (
@@ -75,7 +82,7 @@ values
         'ArchiveTemplate', 'DEPRECATED', 'ARCHIVED', 'USER_ACTION',
         '{NoActiveProcesses}',
         '{SetArchivedTimestamp}',
-        '{template.archived}',
+        '{}',
         0, true, now()
     )
 on conflict do nothing;

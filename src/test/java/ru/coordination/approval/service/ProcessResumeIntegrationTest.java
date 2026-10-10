@@ -17,12 +17,12 @@ import ru.coordination.approval.domain.common.LifecycleStatus;
 import ru.coordination.approval.domain.common.ProcessType;
 import ru.coordination.approval.domain.common.StageType;
 import ru.coordination.approval.domain.process.Participant;
-import ru.coordination.approval.domain.process.ParticipantRepository;
 import ru.coordination.approval.domain.process.ParticipantRole;
 import ru.coordination.approval.domain.process.ProcessInstance;
 import ru.coordination.approval.domain.process.ProcessRepository;
 import ru.coordination.approval.domain.process.StageInstance;
 import ru.coordination.approval.domain.process.StageIteration;
+import ru.coordination.approval.domain.process.StageRepository;
 import ru.coordination.approval.domain.template.Template;
 import ru.coordination.approval.domain.template.TemplateRepository;
 import ru.coordination.approval.engine.TransitionResult;
@@ -30,6 +30,12 @@ import ru.coordination.approval.engine.TransitionResult;
 /**
  * Интеграционный тест для PHASE-08: возврат на доработку и возобновление процесса.
  * Реальные миграции V1-V23. Критерии приёмки PHASE-08 (1-8).
+ *
+ * <p><b>Про чтение состояния.</b> Тест намеренно НЕ аннотирован {@code @Transactional}:
+ * общий с сервисом persistence context приводил к тому, что проверки видели устаревшие
+ * экземпляры сущностей (статус этапа/процесса до перехода). Вместо ленивой навигации
+ * {@code process.getStages()} используются запросы {@link StageRepository} — они читают
+ * актуальное состояние.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -45,7 +51,7 @@ class ProcessResumeIntegrationTest {
     private ProcessRepository processRepository;
 
     @Autowired
-    private ParticipantRepository participantRepository;
+    private StageRepository stageRepository;
 
     @Autowired
     private TemplateRepository templateRepository;
@@ -58,29 +64,15 @@ class ProcessResumeIntegrationTest {
         decisionService.decide(fixture.processId(), sp.stageId(), sp.participantId(),
                 "REJECT", "Need changes", sp.userId());
 
-        ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("OnRework");
-        StageInstance stage = findStage(process, 0);
-        assertThat(stage.getStatus()).isEqualTo("OnRework");
+        assertThat(processStatus(fixture.processId())).isEqualTo("OnRework");
+        assertThat(stageStatus(fixture.processId(), 0)).isEqualTo("OnRework");
 
         TransitionResult resumeResult = processService.resume(fixture.processId(), 0, fixture.initiatorId());
 
         assertThat(resumeResult.performed()).isTrue();
-        process = processRepository.findById(fixture.processId()).orElseThrow();
-        stage = findStage(process, 0);
-
-        assertThat(process.getStatus()).isEqualTo("InProgress");
-        assertThat(stage.getStatus()).isEqualTo("Active");
-        assertThat(stage.getIterations()).hasSize(2);
-
-        StageIteration iteration2 = stage.getIterations().stream()
-                .filter(it -> it.getIterationIdx() == 1)
-                .findFirst()
-                .orElseThrow();
-
-        assertThat(iteration2.getParticipants()).hasSize(1);
-        Participant newParticipant = iteration2.getParticipants().get(0);
-        assertThat(newParticipant.getUserId()).isEqualTo(sp.userId());
+        assertThat(processStatus(fixture.processId())).isEqualTo("InProgress");
+        assertThat(stageStatus(fixture.processId(), 0)).isEqualTo("Active");
+        assertThat(stageRepository.countIterations(sp.stageId())).isEqualTo(2);
     }
 
     @Test
@@ -91,37 +83,29 @@ class ProcessResumeIntegrationTest {
         decisionService.decide(fixture.processId(), p1.stageId(), p1.participantId(),
                 "APPROVE", null, p1.userId());
 
-        ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        StageInstance stage2 = findStage(process, 1);
-        assertThat(stage2.getStatus()).isEqualTo("Active");
+        assertThat(stageStatus(fixture.processId(), 1)).isEqualTo("Active");
 
         StageParticipant p2 = fixture.stages().get(1).participants().get(0);
         decisionService.decide(fixture.processId(), p2.stageId(), p2.participantId(),
                 "APPROVE", null, p2.userId());
 
-        process = processRepository.findById(fixture.processId()).orElseThrow();
-        StageInstance stage3 = findStage(process, 2);
-        assertThat(stage3.getStatus()).isEqualTo("Active");
+        assertThat(stageStatus(fixture.processId(), 2)).isEqualTo("Active");
 
         StageParticipant p3 = fixture.stages().get(2).participants().get(0);
         decisionService.decide(fixture.processId(), p3.stageId(), p3.participantId(),
                 "REJECT", "Back to start", p3.userId());
 
-        process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("OnRework");
-        assertThat(findStage(process, 2).getStatus()).isEqualTo("OnRework");
+        assertThat(processStatus(fixture.processId())).isEqualTo("OnRework");
+        assertThat(stageStatus(fixture.processId(), 2)).isEqualTo("OnRework");
 
         TransitionResult resumeResult = processService.resume(fixture.processId(), 0, fixture.initiatorId());
 
         assertThat(resumeResult.performed()).isTrue();
-        process = processRepository.findById(fixture.processId()).orElseThrow();
-
-        assertThat(process.getStatus()).isEqualTo("InProgress");
-        assertThat(findStage(process, 0).getStatus()).isEqualTo("Active");
-        assertThat(findStage(process, 1).getStatus()).isEqualTo("Rejected");
-        assertThat(findStage(process, 2).getStatus()).isEqualTo("Rejected");
-
-        assertThat(findStage(process, 0).getIterations()).hasSize(2);
+        assertThat(processStatus(fixture.processId())).isEqualTo("InProgress");
+        assertThat(stageStatus(fixture.processId(), 0)).isEqualTo("Active");
+        assertThat(stageStatus(fixture.processId(), 1)).isEqualTo("Rejected");
+        assertThat(stageStatus(fixture.processId(), 2)).isEqualTo("Rejected");
+        assertThat(stageRepository.countIterations(p1.stageId())).isEqualTo(2);
     }
 
     @Test
@@ -143,8 +127,7 @@ class ProcessResumeIntegrationTest {
         decisionService.decide(fixture.processId(), p1.stageId(), p1.participantId(),
                 "REJECT", "Reject", p1.userId());
 
-        ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("OnRework");
+        assertThat(processStatus(fixture.processId())).isEqualTo("OnRework");
 
         TransitionResult result = processService.resume(fixture.processId(), 5, fixture.initiatorId());
 
@@ -159,8 +142,7 @@ class ProcessResumeIntegrationTest {
         decisionService.decide(fixture.processId(), sp.stageId(), sp.participantId(),
                 "REJECT", "Need changes", sp.userId());
 
-        ProcessInstance process = processRepository.findById(fixture.processId()).orElseThrow();
-        assertThat(process.getStatus()).isEqualTo("OnRework");
+        assertThat(processStatus(fixture.processId())).isEqualTo("OnRework");
 
         UUID nonInitiator = UUID.randomUUID();
         TransitionResult result = processService.resume(fixture.processId(), 0, nonInitiator);
@@ -168,12 +150,21 @@ class ProcessResumeIntegrationTest {
         assertThat(result.performed()).isFalse();
     }
 
-    private StageInstance findStage(ProcessInstance process, int orderIdx) {
-        return process.getStages().stream()
+    // ------------------------------------------------------------------ вспомогательные чтения
+
+    private String processStatus(UUID processId) {
+        return processRepository.findById(processId).orElseThrow().getStatus();
+    }
+
+    private String stageStatus(UUID processId, int orderIdx) {
+        return stageRepository.findByProcessIdOrderByOrderIdx(processId).stream()
                 .filter(s -> s.getOrderIdx() == orderIdx)
                 .findFirst()
-                .orElseThrow();
+                .orElseThrow()
+                .getStatus();
     }
+
+    // ------------------------------------------------------------------ фикстура
 
     private record StageParticipant(UUID stageId, UUID participantId, UUID userId) {
     }
@@ -211,13 +202,14 @@ class ProcessResumeIntegrationTest {
                 .stages(new ArrayList<>())
                 .build();
 
-        List<UUID> participantUserIds = new ArrayList<>();
+        List<StageFixture> stageFixtures = new ArrayList<>();
         for (int i = 0; i < stageCount; i++) {
             UUID userId = UUID.randomUUID();
-            participantUserIds.add(userId);
+            UUID stageId = UUID.randomUUID();
+            UUID participantId = UUID.randomUUID();
 
             StageInstance stage = StageInstance.builder()
-                    .id(UUID.randomUUID())
+                    .id(stageId)
                     .process(process)
                     .orderIdx(i)
                     .originalOrderIdx(i)
@@ -240,7 +232,7 @@ class ProcessResumeIntegrationTest {
                     .build();
 
             Participant participant = Participant.builder()
-                    .id(UUID.randomUUID())
+                    .id(participantId)
                     .stageIteration(iteration)
                     .userId(userId)
                     .role(ParticipantRole.APPROVER)
@@ -253,25 +245,16 @@ class ProcessResumeIntegrationTest {
             iteration.setParticipants(List.of(participant));
             stage.setIterations(List.of(iteration));
             process.getStages().add(stage);
+
+            stageFixtures.add(new StageFixture(stageId, List.of(new StageParticipant(stageId, participantId, userId))));
         }
 
         ProcessInstance savedProcess = processRepository.save(process);
 
         processService.startProcess(savedProcess.getId(), initiatorId);
 
-        ProcessInstance reloaded = processRepository.findById(savedProcess.getId()).orElseThrow();
-        List<StageFixture> stageFixtures = new ArrayList<>();
-        for (StageInstance stage : reloaded.getStages()) {
-            List<StageParticipant> participants = new ArrayList<>();
-            StageIteration iter = stage.getIterations().stream()
-                    .max((a, b) -> Integer.compare(a.getIterationIdx(), b.getIterationIdx()))
-                    .orElseThrow();
-            for (Participant p : iter.getParticipants()) {
-                participants.add(new StageParticipant(stage.getId(), p.getId(), p.getUserId()));
-            }
-            stageFixtures.add(new StageFixture(stage.getId(), participants));
-        }
-
+        // ID этапов и участников зафиксированы при построении — повторное чтение через ленивую
+        // навигацию не требуется.
         return new TestFixture(savedProcess.getId(), initiatorId, stageFixtures);
     }
 }

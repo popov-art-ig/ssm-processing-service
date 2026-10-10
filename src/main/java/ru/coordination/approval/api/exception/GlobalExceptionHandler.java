@@ -10,6 +10,29 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import ru.coordination.approval.api.dto.ErrorResponse;
 
+/**
+ * Единая точка преобразования исключений в HTTP-ответы REST API.
+ *
+ * <p>Соответствие «исключение → код → тело» ({@code 07_api_contract.md} §4, {@code ErrorResponse}):
+ * <ul>
+ *   <li>{@link org.springframework.web.bind.MethodArgumentNotValidException} → {@code 400}
+ *       {@code VALIDATION_ERROR} со списком полей;</li>
+ *   <li>{@link EntityNotFoundException} → {@code 404} {@code NOT_FOUND};</li>
+ *   <li>{@link IllegalArgumentException} → {@code 400} {@code BAD_REQUEST};</li>
+ *   <li>{@link org.springframework.dao.DataAccessException} → {@code 400} {@code BAD_REQUEST},
+ *       если причина — {@code IllegalArgumentException} (см. {@link #handleDataAccess}), иначе
+ *       {@code 500} {@code INTERNAL_ERROR};</li>
+ *   <li>{@link IllegalStateException} → {@code 409} {@code CONFLICT};</li>
+ *   <li>любое другое исключение → {@code 500} {@code INTERNAL_ERROR} с обезличенным текстом.</li>
+ * </ul>
+ *
+ * <p><b>Известное ограничение.</b> Бизнес-исключения модуля, которые не перечислены выше
+ * ({@code NoMatchingTemplateException}, {@code TemplateNotFoundException},
+ * {@code RequiredSlotNotResolvedException}), попадают в последнюю ветку и отдаются клиенту как
+ * {@code 500}, хотя по смыслу это {@code 4xx} (шаблон не найден, слот не разрешён). Причина
+ * остаётся только в логе. Это не дефект обработчика как такового — ветки для них просто не
+ * заведены.
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {

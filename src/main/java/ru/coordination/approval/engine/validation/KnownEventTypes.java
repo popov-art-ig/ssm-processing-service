@@ -7,8 +7,8 @@ import java.util.Set;
  * Известные типы событий — проверка {@code EVENT_UNKNOWN} из
  * {@code 05_guards_actions_registry.md} §7.1.
  *
- * <p>Источник перечня — сводная таблица событий {@code 06_event_contract.md} §18. Контракт
- * событий определяет единый формат {@code approval.<агрегат>.<действие>} (там же, §3), поэтому
+ * <p>Источник перечня — сводная таблица событий {@code 06_event_contract.md} §20. Контракт
+ * событий определяет единый формат {@code approval.<агрегат>.<действие>} (там же, §4.1), поэтому
  * событие вне этого перечня — нарушение контракта: потребитель (аналитика, уведомления,
  * интеграции) не сможет его распознать.
  *
@@ -19,7 +19,7 @@ import java.util.Set;
  */
 public final class KnownEventTypes {
 
-    /** Все типы событий из {@code 06_event_contract.md} §18. */
+    /** Все типы событий из {@code 06_event_contract.md} §20. */
     public static final Set<String> ALL = Set.of(
             // Процесс
             "approval.process.created",
@@ -74,9 +74,15 @@ public final class KnownEventTypes {
             "approval.config.published",
             "approval.config.deprecated");
 
+    /** Класс-константа: состояние не хранит, поэтому экземпляры не создаются. */
     private KnownEventTypes() {
     }
 
+    /**
+     * {@code true}, если событие объявлено в контракте. Точное совпадение строки: имена событий
+     * — часть контракта с подписчиками, поэтому «похожее» имя (опечатка, другой регистр) должно
+     * стать нарушением {@code EVENT_UNKNOWN}, а не быть принятым.
+     */
     public static boolean isKnown(String eventType) {
         return ALL.contains(eventType);
     }

@@ -53,11 +53,27 @@ public class TransitionEngine {
     private final AuditEventRepository auditEventRepository;
 
     /**
+     * Выполняет один переход по алгоритму {@code 04_state_machines.md} §3.3: берёт кандидатов
+     * для {@code (fromState, trigger)}, проверяет guards по порядку приоритета и применяет
+     * первый переход, все guards которого вернули {@code true}; отказы guards не приводят к
+     * ошибке — возвращается «не выполнено» с указанием исходного состояния.
+     *
      * @param configId    id конкретной версии {@code StateMachineConfig}, зафиксированной
      *                    вызывающим кодом (Snapshot-on-Start — вне объёма этой фазы); модель
      *                    строится заново на каждый вызов, не кэшируется.
      * @param statusWriter записывает новый {@code status} в сущность вызывающего кода при
      *                    успешном переходе; не вызывается, если переход не выполнен.
+     * @return выполненный переход ({@code performed = true} с {@code toState}, кодом перехода и
+     *         списком {@code emits}) либо {@link TransitionResult#notPerformed}, если все
+     *         кандидаты отклонены guards
+     * @throws NoApplicableTransitionException если активных переходов для
+     *         {@code (entityType, fromState, trigger)} нет вообще — это ошибка конфигурации, а
+     *         не бизнес-отказ
+     * @throws InvalidTargetStatusException если {@code toState} выбранного перехода не
+     *         зарегистрирован в {@code status_registry} для этого {@code entityType}
+     * @throws IllegalArgumentException если карта, загруженная по {@code configId}, описывает
+     *         другой {@code entityType}: вызывающий код передал версию конфига от другой машины
+     *         состояний, и переход был бы выполнен по чужой карте
      */
     @Transactional
     public TransitionResult transition(
@@ -98,6 +114,10 @@ public class TransitionEngine {
     }
 
     /**
+     * Guards перехода проверяются по порядку {@code guards[]} и останавливаются на первом
+     * {@code false}: возвращается код отказавшего guard'а, чтобы вызывающий {@link #transition}
+     * мог записать его в лог.
+     *
      * @return код первого guard'а, вернувшего {@code false}, либо {@code null}, если все прошли
      */
     private String firstFailingGuard(TransitionConfig transition, TransitionContext context) {
@@ -110,6 +130,11 @@ public class TransitionEngine {
         return null;
     }
 
+    /**
+     * Применяет выбранный переход — шаги 3b–3c алгоритма: фиксирует новый статус, выполняет
+     * actions в порядке {@code actions[]} и пишет {@link AuditEvent}. Все три шага идут в одной
+     * транзакции (ADR-028), поэтому частично применённого перехода не бывает.
+     */
     private TransitionResult execute(
             EntityType entityType,
             UUID entityId,
@@ -127,9 +152,9 @@ public class TransitionEngine {
         // не активировался, процесс не завершался, ProcessRework не срабатывал.
         //
         // Guards самого перехода уже пройдены (шаг 2 алгоритма) и оценивались по исходному
-        // состоянию, поэтому на них смена порядка не влияет. Guard'ы вложенных переходов, которым
-        // важно отличие «уже завершён» от «завершается прямо сейчас», получают это отличие
-        // параметрами контекста (см. AllStagesCompletedGuard.checkingStageClosure).
+        // состоянию, поэтому на них смена порядка не влияет. Guard'ы вложенных переходов читают
+        // статус связанной сущности из репозитория в той же транзакции (PreviousStageCompletedGuard,
+        // AllStagesCompletedGuard), поэтому запись статуса до actions обязательна и для них.
         statusWriter.accept(transition.getToState());
 
         for (String actionCode : transition.getActions()) {
@@ -143,12 +168,23 @@ public class TransitionEngine {
                 transition.getFromState(), transition.getToState(), transition.getCode(), transition.getEmits());
     }
 
+    /**
+     * Проверяет {@code toState} по реестру статусов: {@code entityType} там хранится строкой
+     * ({@code StatusRegistry.entityType}), поэтому передаётся {@code name()} вместо enum —
+     * так задано схемой БД (PHASE-02, критерий приёмки 4).
+     */
     private void validateTargetStatus(EntityType entityType, String toState) {
         if (!statusRegistryRepository.existsByCodeAndEntityType(toState, entityType.name())) {
             throw new InvalidTargetStatusException(entityType, toState);
         }
     }
 
+    /**
+     * Пишет {@link AuditEvent} на каждый выполненный переход (шаг 3c алгоритма, обязателен без
+     * исключений — PHASE-02, критерий приёмки 2). В {@code payload} попадают
+     * {@code fromState}/{@code toState}/{@code trigger}/{@code emits}: этого достаточно, чтобы
+     * восстановить переход по аудиту, не поднимая версию конфига, действовавшую в тот момент.
+     */
     private void recordAudit(
             EntityType entityType, UUID entityId, TransitionConfig transition, TransitionContext context) {
         AuditEvent event = AuditEvent.builder()

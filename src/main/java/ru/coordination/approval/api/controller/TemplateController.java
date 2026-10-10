@@ -62,6 +62,15 @@ public class TemplateController {
     private final TemplateRequestMapper templateRequestMapper;
     private final TemplateService templateService;
 
+    /**
+     * Создаёт шаблон в статусе {@code DRAFT} через {@link TemplateService#create}; тело запроса
+     * предварительно переводится в DTO сервисного слоя {@link TemplateRequestMapper} (в API
+     * перечисления приходят строками).
+     *
+     * <p>Отвечает {@code 201} с заголовком {@code Location} на созданный ресурс. {@code 400} —
+     * тело не прошло {@code @Valid} или неизвестное значение {@code processType}
+     * ({@link IllegalArgumentException} из маппера).
+     */
     @PostMapping
     @Operation(summary = "Создать шаблон",
                description = "Создает новый шаблон процесса согласования в статусе DRAFT")
@@ -79,6 +88,15 @@ public class TemplateController {
                 .body(templateMapper.toDto(created));
     }
 
+    /**
+     * Обновляет шаблон: {@code DRAFT} правится на месте, {@code PUBLISHED} — через
+     * {@link TemplateService#update} создаёт <b>новую версию</b> (ADR-023), поэтому ответ может
+     * содержать другой {@code id}, чем в пути.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — шаблона нет ({@link EntityNotFoundException} в
+     * сервисе); {@code 400} — статус не {@code DRAFT} и не {@code PUBLISHED} либо неизвестное
+     * значение перечисления в теле.
+     */
     @PutMapping("/{templateId}")
     @Operation(summary = "Обновить шаблон",
                description = "Обновляет шаблон. Черновик (DRAFT) правится на месте; обновление "
@@ -102,6 +120,16 @@ public class TemplateController {
         return ResponseEntity.ok(templateMapper.toDto(updated));
     }
 
+    /**
+     * Публикует шаблон: {@link TemplateService#publish} проводит переход {@code PublishTemplate}
+     * ({@code DRAFT → PUBLISHED}), а структуру проверяет движок — actions
+     * {@code ValidateTemplateStructure} и {@code AllMandatorySlotsValid}, а не контроллер.
+     *
+     * <p>Отвечает {@code 200} с перечитанным шаблоном; {@code 404} — шаблона нет; {@code 409} —
+     * переход не выполнен, то есть шаблон не в {@code DRAFT} либо структура не прошла проверку
+     * ({@link IllegalStateException} из {@code okAfterTransition}). Отдельного {@code 400} для
+     * «не тот статус» здесь нет: и ошибка клиента, и отказ guard'а сведены к {@code 409}.
+     */
     @PostMapping("/{templateId}/publish")
     @Operation(summary = "Опубликовать шаблон",
                description = "Переводит шаблон DRAFT → PUBLISHED. Движок проверяет структуру "
@@ -125,6 +153,14 @@ public class TemplateController {
         return okAfterTransition(templateId, result, "PublishTemplate");
     }
 
+    /**
+     * Снимает шаблон с публикации: {@link TemplateService#deprecate} проводит переход
+     * {@code DeprecateTemplate} ({@code PUBLISHED → DEPRECATED}).
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — шаблона нет; {@code 409} — переход не выполнен
+     * (шаблон не в {@code PUBLISHED}). Сам переход ничего не делает с уже запущенными процессами:
+     * они продолжают работу по своей версии шаблона (Fork &amp; Drain, ADR-003).
+     */
     @PostMapping("/{templateId}/deprecate")
     @Operation(summary = "Снять шаблон с публикации",
                description = "Переводит шаблон PUBLISHED → DEPRECATED. Новые процессы по нему не создаются, "
@@ -145,6 +181,14 @@ public class TemplateController {
         return okAfterTransition(templateId, result, "DeprecateTemplate");
     }
 
+    /**
+     * Архивирует шаблон: {@link TemplateService#archive} проводит переход {@code ArchiveTemplate}
+     * ({@code DEPRECATED → ARCHIVED}), а guard {@code NoActiveProcesses} проверяет, что на шаблоне
+     * не осталось незавершённых процессов.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — шаблона нет; {@code 409} — переход не выполнен: в
+     * ответе не различаются «есть активные процессы» и «шаблон не в {@code DEPRECATED}».
+     */
     @PostMapping("/{templateId}/archive")
     @Operation(summary = "Архивировать шаблон",
                description = "Переводит шаблон DEPRECATED → ARCHIVED. Требует отсутствия активных "
@@ -167,6 +211,15 @@ public class TemplateController {
         return okAfterTransition(templateId, result, "ArchiveTemplate");
     }
 
+    /**
+     * Форкает шаблон: {@link TemplateService#fork} создаёт <b>новую строку</b> с
+     * {@code version + 1} и {@code parentTemplateId} в статусе {@code DRAFT} (ADR-023), исходный
+     * шаблон не меняется. Это способ править опубликованный шаблон, не снимая его с публикации.
+     *
+     * <p>Отвечает {@code 201} с заголовком {@code Location} на новую версию; {@code 404} —
+     * исходного шаблона нет. Тело запроса необязательно ({@code required = false}): без него
+     * автором версии будет {@code null}.
+     */
     @PostMapping("/{templateId}/fork")
     @Operation(summary = "Форк шаблона",
                description = "Создаёт новую версию шаблона: новая строка с version + 1 и "
@@ -191,6 +244,13 @@ public class TemplateController {
                 .body(templateMapper.toDto(forked));
     }
 
+    /**
+     * Шаблон по id — детально: этапы со слотами и правила применимости.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — шаблона нет ({@link EntityNotFoundException}).
+     * Чтение помечено {@code readOnly = true}, потому что маппер обходит ленивые коллекции
+     * {@code stages → actorSlots} и {@code applicabilityRules} при выключенном open-in-view.
+     */
     @GetMapping("/{templateId}")
     @Operation(summary = "Получить шаблон",
                description = "Возвращает детальную информацию о шаблоне по ID")
@@ -209,6 +269,15 @@ public class TemplateController {
         return ResponseEntity.ok(templateMapper.toDto(template));
     }
 
+    /**
+     * Список шаблонов с необязательными фильтрами {@code status}, {@code processType} и
+     * {@code name} (частичное совпадение без учёта регистра).
+     *
+     * <p>Отвечает {@code 200}; {@code 400} — неизвестное значение {@code status} или
+     * {@code processType}: перечисления разбираются в контроллере <b>до</b> построения
+     * {@link Specification}, иначе клиент получал бы {@code 500} из глубины запроса. Пагинации нет
+     * — контракт §10.1 её не описывает, но ответ всегда возвращается целиком.
+     */
     @GetMapping
     @Operation(summary = "Получить список шаблонов",
                description = "Возвращает список шаблонов с фильтрацией по статусу, типу процесса и имени")
@@ -272,6 +341,14 @@ public class TemplateController {
         return (root, query, cb) -> cb.equal(root.get("status"), parsed);
     }
 
+    /**
+     * Фильтр по типу процесса.
+     *
+     * <p>Значение разбирается до создания лямбды {@link Specification} по той же причине, что и в
+     * {@link #statusFilter}: исключение внутри лямбды всплывает во время выполнения запроса и
+     * превращается в {@code InvalidDataAccessApiUsageException}, то есть {@code 500} вместо
+     * {@code 400}.
+     */
     private Specification<Template> processTypeFilter(String processType) {
         if (processType == null || processType.isBlank()) {
             return Specification.unrestricted();

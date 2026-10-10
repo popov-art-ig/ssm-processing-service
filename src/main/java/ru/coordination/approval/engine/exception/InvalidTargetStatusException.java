@@ -10,6 +10,11 @@ import ru.coordination.approval.domain.common.EntityType;
  */
 public class InvalidTargetStatusException extends RuntimeException {
 
+    /**
+     * @param entityType тип сущности, для которого проверяется статус ({@code status_registry}
+     *                   хранит его строкой, поэтому в сообщении он приводится через {@code name()})
+     * @param toState    целевое состояние перехода, отсутствующее в реестре статусов
+     */
     public InvalidTargetStatusException(EntityType entityType, String toState) {
         super("toState '%s' is not registered in status_registry for entityType=%s"
                 .formatted(toState, entityType));

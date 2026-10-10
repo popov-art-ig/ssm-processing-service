@@ -31,6 +31,23 @@ import ru.coordination.approval.engine.registry.Action;
  *
  * <p>Вложенный вызов {@link TransitionEngine#transition} выполняется в той же транзакции, что и
  * внешний переход этапа.
+ *
+ * <p><b>Почему guard вложенного перехода читает статус из БД.</b> Действие запускает
+ * {@code ActivateStage}, и {@link ru.coordination.approval.service.guard.PreviousStageCompletedGuard}
+ * проверяет, что закрываемый этап уже финальный. В момент вызова actions это ещё не так на уровне
+ * сущности (статус пишет движок после actions), но уже так в БД — поэтому guard обязан смотреть
+ * {@code stage_instance} отдельным запросом, иначе следующий этап не активировался бы никогда.
+ * Тем же порядком объясняется, почему процесс завершается отдельным действием
+ * {@link EvaluateProcessCompletionAction}, а не «догадкой» по статусу в памяти.
+ *
+ * <p><b>Почему «следующий» — это ровно {@code orderIdx + 1}.</b> Нумерация этапов в маршруте
+ * непрерывна и начинается с 0, поэтому арифметика по индексу эквивалентна выбору следующего. Это
+ * держится на плотности нумерации: если маршрут когда-нибудь получит разрыв в {@code orderIdx}
+ * (например, шаблон с пропущенным индексом), следующий этап не найдётся, действие молча выйдет, а
+ * процесс при следующем закрытии этапа может завершиться по {@code ProcessApproved} — то есть
+ * проверка «есть ли ещё этапы» не защищена от разрывов нумерации. Этап, ушедший на доработку,
+ * сохраняет свой {@code orderIdx} (переактивация выполняется переходом {@code ReactivateStage} без
+ * смены номера), поэтому возврат на доработку нумерацию не ломает.
  */
 @Component("activateNextStageAction")
 @RequiredArgsConstructor
@@ -39,6 +56,15 @@ public class ActivateNextStageAction implements Action {
     private final StateMachineConfigRepository stateMachineConfigRepository;
     private final TransitionEngine transitionEngine;
 
+    /**
+     * Активирует следующий по {@code orderIdx} этап процесса вложенным переходом
+     * {@code ActivateStage}.
+     *
+     * @param context контекст перехода этапа-предшественника; сущность — {@link StageInstance},
+     *                следующий этап берётся из {@code process.getStages()}
+     * @throws IllegalStateException если следующий этап существует, но не активировался
+     *         ({@code performed == false}) — процесс остался бы без активного этапа
+     */
     @Override
     public void execute(TransitionContext context) {
         StageInstance currentStage = (StageInstance) context.entity();

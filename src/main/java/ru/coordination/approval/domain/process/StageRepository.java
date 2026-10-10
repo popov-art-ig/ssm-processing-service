@@ -30,7 +30,11 @@ public interface StageRepository extends JpaRepository<StageInstance, UUID> {
     @Query("select s from StageInstance s where s.process.id = :processId order by s.orderIdx")
     List<StageInstance> findByProcessIdOrderByOrderIdx(@Param("processId") UUID processId);
 
-    /** Число итераций этапа — проверка создания новой итерации при возобновлении. */
+    /**
+     * Число итераций этапа. Отдельный {@code count}-запрос вместо {@code stage.getIterations().size()}:
+     * вызывается там, где важна только цифра (проверка, что возобновление процесса создало новую
+     * итерацию, а не переиспользовало существующую).
+     */
     @Query("select count(i) from StageIteration i where i.stage.id = :stageId")
     long countIterations(@Param("stageId") UUID stageId);
 

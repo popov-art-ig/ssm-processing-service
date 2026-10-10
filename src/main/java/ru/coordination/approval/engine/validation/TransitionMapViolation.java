@@ -17,10 +17,12 @@ public record TransitionMapViolation(
         String where,
         String message) {
 
+    /** Создаёт нарушение с указанием места — этим методом валидатор фиксирует каждый найденный дефект карты. */
     public static TransitionMapViolation of(TransitionMapErrorCode code, String where, String message) {
         return new TransitionMapViolation(code, where, message);
     }
 
+    /** Формат для логов и сообщений исключения: код, место, описание. */
     @Override
     public String toString() {
         return "%s at %s: %s".formatted(code, where, message);

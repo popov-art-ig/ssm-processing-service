@@ -26,13 +26,22 @@ import ru.coordination.approval.domain.common.BaseEntity;
 @SuperBuilder
 public class FinalDecision extends BaseEntity {
 
+    /**
+     * Процесс, к которому относится финальное решение. Связь «один к одному» с уникальным
+     * индексом: у процесса не может быть двух финальных решений ({@code 08_db_schema.md} §13.1).
+     */
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "process_id", nullable = false, unique = true)
     private ProcessInstance process;
 
+    /**
+     * Ответственный (только {@code UNIFIED}), принявший финальное решение. Хранится как «голый»
+     * id, чтобы решение не зависело от изменений в сервисе пользователей.
+     */
     @Column(name = "responsible_user_id", nullable = false)
     private UUID responsibleUserId;
 
+    /** Роль, по которой был разрешён ответственный на момент решения (ADR-010); только для трассировки. */
     @Column(name = "responsible_resolved_role_ref")
     private UUID responsibleResolvedRoleRef;
 
@@ -40,12 +49,15 @@ public class FinalDecision extends BaseEntity {
     @Column(name = "result", length = 100, nullable = false)
     private String result;
 
+    /** Текст финального решения. */
     @Column(name = "comment")
     private String comment;
 
+    /** Момент принятия финального решения. */
     @Column(name = "recorded_at", nullable = false)
     private Instant recordedAt;
 
+    /** Время создания строки. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

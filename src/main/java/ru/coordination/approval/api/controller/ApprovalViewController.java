@@ -19,6 +19,19 @@ import ru.coordination.approval.api.exception.EntityNotFoundException;
 import ru.coordination.approval.api.exception.ErrorResponse;
 import ru.coordination.approval.api.service.ApprovalViewService;
 
+/**
+ * Агрегированные представления для UI — {@code 07_api_contract.md} §25 (группа 16
+ * «Агрегированные эндпоинты для Front», ADR-020), префикс {@code /api/v1/approval-view}.
+ *
+ * <p>Каждый эндпоинт отдаёт готовую модель экрана одним запросом: агрегация целиком в
+ * {@link ApprovalViewService}, который batch-загрузкой участников и решений заменяет обход
+ * связей в цикле (целевое требование — ответ по процессу с 10 этапами быстрее 500 мс).
+ *
+ * <p>Форма путей отличается от контракта: §25.2 описывает {@code GET /entities/approval-view} с
+ * параметрами {@code entityType}/{@code entityId}/{@code detailLevel}, а {@code /tasks/my} и
+ * {@code /processes/my} в §25 отсутствуют вовсе (там {@code approval-actions} и
+ * {@code approval-remarks}).
+ */
 @RestController
 @RequestMapping("/api/v1/approval-view")
 @RequiredArgsConstructor
@@ -27,6 +40,17 @@ public class ApprovalViewController {
 
     private final ApprovalViewService approvalViewService;
 
+    /**
+     * Собирает экран согласования целиком — процесс, этапы с участниками и их решениями, замечания
+     * и комментарии — через {@link ApprovalViewService#getApprovalView}.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — по паре {@code entityType}/{@code entityId} процесс не
+     * найден ({@link EntityNotFoundException}). Известные ограничения относительно §25.2: активный
+     * процесс не выбирается (при нескольких процессах на одну сущность
+     * {@code findByEntityTypeAndEntityId} бросит {@code IncorrectResultSizeDataAccessException},
+     * то есть {@code 500}), а параметры {@code detailLevel}/{@code full}/{@code role}, которыми
+     * контракт управляет объёмом ответа, не поддерживаются — ответ всегда полный.
+     */
     @GetMapping("/entities/{entityId}")
     @Operation(summary = "Получить полную информацию о процессе согласования",
                description = "Возвращает процесс + этапы + участники + решения + замечания в одном запросе (оптимизировано для UI)")
@@ -45,6 +69,15 @@ public class ApprovalViewController {
         return ResponseEntity.ok(view);
     }
 
+    /**
+     * Задачи пользователя — участники в статусе {@code Assigned} со всей обвязкой
+     * (процесс, этап, срок) в одной странице, через {@link ApprovalViewService#getMyTasks}.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} невозможен — пустой результат остаётся пустой
+     * страницей. Идентификатор задачи в ответе — это id участника: отдельной сущности «задача» в
+     * модели нет, а {@code TaskDto} склеивает {@code Participant}, {@code StageInstance} и
+     * {@code ProcessInstance} (§25, ADR-020).
+     */
     @GetMapping("/tasks/my")
     @Operation(summary = "Получить задачи текущего пользователя",
                description = "Возвращает список участников в статусе Assigned для указанного пользователя")
@@ -65,6 +98,16 @@ public class ApprovalViewController {
         return ResponseEntity.ok(tasks);
     }
 
+    /**
+     * Процессы пользователя — где он инициатор или ответственный — в виде кратких карточек для
+     * списка, через {@link ApprovalViewService#getMyProcesses}.
+     *
+     * <p>Отвечает {@code 200}; условие «или» накладывается на обоих полях сразу
+     * ({@code findByInitiatorIdOrResponsibleUserId}), поэтому один и тот же пользователь может
+     * получить процесс дважды, если он и инициатор, и ответственный. Представление намеренно
+     * короче детального: {@code currentStageName} — имя первого этапа в статусе {@code Active}, а
+     * {@code dueDate} всегда {@code null} (в сервисе помечено TODO).
+     */
     @GetMapping("/processes/my")
     @Operation(summary = "Получить процессы текущего пользователя",
                description = "Возвращает список процессов, где пользователь является инициатором или ответственным")

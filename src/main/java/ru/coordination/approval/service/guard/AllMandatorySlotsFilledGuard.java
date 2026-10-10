@@ -24,6 +24,11 @@ import ru.coordination.approval.engine.registry.Guard;
 @Component("allMandatorySlotsFilledGuard")
 public class AllMandatorySlotsFilledGuard implements Guard {
 
+    /**
+     * @return {@code true}, если в текущей (последней по {@code iterationIdx}) итерации каждого
+     *         {@code mandatory}-этапа есть хотя бы один участник; {@code false} — при пустой
+     *         итерации обязательного этапа, этапе без итераций и для чужого типа сущности
+     */
     @Override
     public boolean evaluate(TransitionContext context) {
         // Guard процессного уровня: при вызове из перехода уровня STAGE возвращаем false,

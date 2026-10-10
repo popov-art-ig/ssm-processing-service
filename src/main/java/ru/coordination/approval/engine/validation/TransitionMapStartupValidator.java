@@ -30,6 +30,14 @@ public class TransitionMapStartupValidator implements ApplicationRunner {
     private final StateMachineConfigRepository stateMachineConfigRepository;
     private final TransitionMapValidator validator;
 
+    /**
+     * Проверяет опубликованные карты и завершает запуск исключением, если хоть одна
+     * некорректна: продолжать работу с дефектной картой хуже, чем не подняться — отказ
+     * проявился бы позже и как «переход не найден» во время бизнес-операции.
+     *
+     * <p>Проверяются все карты, а не до первого падения: сообщение содержит нарушения всех карт,
+     * чтобы не чинить их по одной за перезапуск.
+     */
     @Override
     public void run(ApplicationArguments args) {
         List<StateMachineConfig> published = stateMachineConfigRepository.findAll().stream()

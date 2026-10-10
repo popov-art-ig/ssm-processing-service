@@ -34,6 +34,10 @@ import ru.coordination.approval.engine.registry.GuardRegistryRepository;
  * <p>Нарушения не бросаются по одному: {@link #validate} возвращает полный список, а
  * {@link #validateOrThrow} превращает его в {@link InvalidTransitionMapException}. Так при
  * публикации видно сразу все проблемы карты.
+ *
+ * <p>Известное ограничение: {@link TransitionMapErrorCode#PARAMS_INVALID} не порождается —
+ * {@code params_schema} в реестрах guard/action пока не заполняется (см. README, «Валидация
+ * карты переходов»), поэтому проверять соответствие параметров схеме нечему.
  */
 @Component
 @Slf4j
@@ -63,6 +67,15 @@ public class TransitionMapValidator {
      * Проверяет переданные состояния и переходы. Отдельная перегрузка нужна, чтобы валидацию
      * можно было применять к ещё не сохранённой карте (публикация новой версии) и к данным,
      * собранным в памяти.
+     *
+     * @param config     карта-владелец: из неё берутся {@code entityType} (для проверки
+     *                   применимости guard/action) и описание для сообщений
+     * @param states     состояния карты; из них собирается множество допустимых кодов и
+     *                   проверяется ровно одно {@code is_initial}
+     * @param transitions переходы карты, включая неактивные — неактивные пропускаются только в
+     *                   проверке неоднозначности ({@code AMBIGUOUS_TRANSITION}), остальные
+     *                   проверки (guards, actions, emits, состояния) идут и для них
+     * @return список нарушений; пустой список — карта корректна
      */
     public List<TransitionMapViolation> validate(
             StateMachineConfig config,
@@ -200,7 +213,15 @@ public class TransitionMapValidator {
         return violations;
     }
 
-    /** Проверяет карту и бросает {@link InvalidTransitionMapException}, если есть нарушения. */
+    /**
+     * Проверяет карту и бросает {@link InvalidTransitionMapException}, если есть нарушения.
+     *
+     * <p>В текущем объёме продовый код этого метода не вызывает: публикации карты через API нет,
+     * карты приходят из сид-миграций Flyway, а административный эндпоинт валидации использует
+     * {@link #validate} и возвращает список нарушений в ответе. Метод — точка входа для будущей
+     * транзакции публикации карты: {@code Publish} обязана не перевести карту в {@code PUBLISHED}
+     * при нарушениях.
+     */
     @Transactional(readOnly = true)
     public void validateOrThrow(StateMachineConfig config) {
         List<TransitionMapViolation> violations = validate(config);
@@ -214,8 +235,12 @@ public class TransitionMapValidator {
      *
      * <p>Черновики исключены осознанно: карта в статусе {@code DRAFT} может быть неполной, и
      * именно на этапе публикации {@link #validateOrThrow} должен не дать ей стать
-     * {@code PUBLISHED}. Проверка на старте приложения (см.
-     * {@code TransitionMapStartupValidator}) использует этот метод.
+     * {@code PUBLISHED}.
+     *
+     * <p>Известное расхождение: {@code TransitionMapStartupValidator} этот метод не использует —
+     * он сам фильтрует {@code PUBLISHED} и вызывает {@link #validate} по каждой карте, чтобы
+     * сгруппировать нарушения по картам в одном сообщении. Дублирование фильтра стоит убрать,
+     * переведя валидатор на этот метод, — правка логики вне объёма ветки комментариев.
      */
     @Transactional(readOnly = true)
     public List<TransitionMapViolation> validatePublished() {
@@ -229,6 +254,12 @@ public class TransitionMapValidator {
         return violations;
     }
 
+    /**
+     * Читает реестр guard'ов целиком в один запрос: проверяются все переходы карты, а карта
+     * определяет десятки guards — по запросу на каждый код это дало бы N+1. Деактивированные
+     * записи остаются в карте намеренно: про них нужно сообщить нарушением {@code
+     * GUARD_NOT_FOUND} с указанием перехода, а не пропустить как отсутствующие.
+     */
     private Map<String, GuardRegistryEntry> loadGuards() {
         Map<String, GuardRegistryEntry> byCode = new HashMap<>();
         for (GuardRegistryEntry entry : guardRegistryRepository.findAll()) {
@@ -237,6 +268,7 @@ public class TransitionMapValidator {
         return byCode;
     }
 
+    /** См. {@link #loadGuards}: та же причина — один запрос на все action'ы карты. */
     private Map<String, ActionRegistryEntry> loadActions() {
         Map<String, ActionRegistryEntry> byCode = new HashMap<>();
         for (ActionRegistryEntry entry : actionRegistryRepository.findAll()) {
@@ -257,6 +289,12 @@ public class TransitionMapValidator {
                 || applicableEntities.contains(entityTypeName);
     }
 
+    /**
+     * Описание карты для сообщений об ошибке: {@code id} обязателен в дополнение к
+     * {@code entityType}/{@code version}, потому что у одной пары {@code (entityType,
+     * processType)} одновременно живут несколько версий (Fork & Drain, ADR-003) — без id
+     * непонятно, какую именно карту править.
+     */
     private String describe(StateMachineConfig config) {
         return "%s/%s v%d (id=%s)".formatted(
                 config.getEntityType(), config.getProcessType(), config.getVersion(), config.getId());

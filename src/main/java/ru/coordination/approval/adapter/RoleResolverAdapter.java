@@ -4,14 +4,37 @@ import java.util.List;
 import java.util.UUID;
 import ru.coordination.approval.dto.generation.EntitySnapshot;
 
+/**
+ * Порт подбора пользователей по ролям (ADR-004; {@code 09_adapters.md} §5,
+ * {@code 10_architecture.md} §8.2): на генерации маршрута превращает роли слота шаблона
+ * ({@code SlotTemplate.acceptableRoles}) в конкретных участников процесса.
+ *
+ * <p>Адаптер считается «пустым» по умолчанию: если интеграция выключена или внешний справочник
+ * ролей недоступен, возвращается пустой результат — маршрут генерируется без участников в слотах,
+ * заданных только ролями, а заполняет их UI. Ошибки адаптера не должны блокировать работу модуля
+ * ({@code 09_adapters.md} §3.4, §5.5, §5.8; ADR-008).
+ *
+ * <p><b>Отклонения от спецификации (зафиксированы как есть, не исправлялись).</b> ADR-010 и
+ * {@code 09_adapters.md} §5.3 требуют вернуть <b>одного</b> приоритетного пользователя
+ * ({@code UUID} либо {@code null}, если он не найден) и объявляют три метода: {@code resolveRole},
+ * {@code resolveRoles}, {@code matches}. В коде объявлен только {@code resolveRole}, и он
+ * возвращает список {@code List<UUID>}, то есть контракт «роль → один пользователь» не выполняется,
+ * а методов {@code resolveRoles} и {@code matches} нет вовсе.
+ */
 public interface RoleResolverAdapter {
     /**
-     * Resolve role to list of user IDs.
+     * Подбирает пользователей с указанной ролью.
      *
-     * @param roleId role identifier
-     * @param organizationId organization context
-     * @param context entity snapshot for dynamic resolution
-     * @return list of resolved user IDs
+     * <p>Упрощение относительно спецификации: возвращается список, а не один приоритетный
+     * пользователь (см. расхождение в Javadoc интерфейса), поэтому вызывающий код сам решает,
+     * сколько кандидатов превратить в участников. Пустой список — легальный ответ «никто не
+     * найден»: ошибку бросать нельзя, иначе недоступность внешнего справочника ролей заблокирует
+     * создание процесса (ADR-008, {@code 09_adapters.md} §5.5, §5.8).
+     *
+     * @param roleId         идентификатор роли
+     * @param organizationId организация, в рамках которой ищется пользователь; может быть {@code null}
+     * @param context        снимок сущности — для правил, зависящих от атрибутов документа
+     * @return идентификаторы найденных пользователей; пустой список, если не найден никто
      */
     List<UUID> resolveRole(UUID roleId, UUID organizationId, EntitySnapshot context);
 }

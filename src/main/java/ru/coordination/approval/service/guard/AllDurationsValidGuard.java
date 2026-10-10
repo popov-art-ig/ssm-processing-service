@@ -17,6 +17,11 @@ import ru.coordination.approval.engine.registry.Guard;
 @Component("allDurationsValidGuard")
 public class AllDurationsValidGuard implements Guard {
 
+    /**
+     * @return {@code true}, если у каждого этапа {@code duration} задан и положителен;
+     *         {@code false} — для этапа с нулевым/отрицательным сроком и для чужого типа
+     *         сущности (см. комментарий в теле)
+     */
     @Override
     public boolean evaluate(TransitionContext context) {
         // Guard процессного уровня: при вызове из перехода уровня STAGE возвращаем false,

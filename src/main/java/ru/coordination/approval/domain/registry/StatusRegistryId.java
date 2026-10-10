@@ -17,6 +17,9 @@ import lombok.NoArgsConstructor;
 @EqualsAndHashCode
 public class StatusRegistryId implements Serializable {
 
+    /** Код статуса — первая часть ключа; см. {@link StatusRegistry#getCode()}. */
     private String code;
+
+    /** Тип сущности — вторая часть ключа; см. {@link StatusRegistry#getEntityType()}. */
     private String entityType;
 }

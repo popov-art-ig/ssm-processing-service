@@ -34,17 +34,33 @@ public class NotificationSettings {
     @Builder.Default
     private Short id = 1;
 
+    /**
+     * Включены ли напоминания. По замыслу {@code false} не снимает задачу с планировщика: джоба
+     * напоминаний продолжает запускаться, но не рассылает уведомления
+     * ({@code 08_db_schema.md} §22.1, ADR-027). Ни одной {@code @Scheduled}-джобы в проекте пока
+     * нет — настройка читается только REST-эндпоинтом {@code /admin/notification-settings}.
+     */
     @Column(name = "reminder_enabled", nullable = false)
     @Builder.Default
     private boolean reminderEnabled = true;
 
+    /**
+     * Периодичность напоминаний в часах; по умолчанию 24 — прежний хардкод «раз в день».
+     * Значение задумано как читаемое джобой на каждом запуске вместо константы в коде (ADR-027);
+     * сейчас его отдаёт только REST-эндпоинт настроек, БД гарантирует {@code > 0}.
+     */
     @Column(name = "reminder_interval_hours", nullable = false)
     @Builder.Default
     private Integer reminderIntervalHours = 24;
 
+    /** Время последнего изменения настройки. */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    /**
+     * Администратор, изменивший настройку. Отдельной append-only истории для этой единственной
+     * строки не ведётся — значимо только текущее значение ({@code 08_db_schema.md} §22.1).
+     */
     @Column(name = "updated_by")
     private UUID updatedBy;
 

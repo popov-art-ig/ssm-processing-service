@@ -18,6 +18,22 @@ import ru.coordination.approval.domain.template.TemplateRepository;
 import ru.coordination.approval.dto.generation.EntitySnapshot;
 import ru.coordination.approval.exception.NoMatchingTemplateException;
 
+/**
+ * Подбор шаблона маршрута по правилам применимости (PHASE-15, {@code 07_api_contract.md} §11.1).
+ * Работает только с шаблонами в статусе {@code PUBLISHED} и возвращает кандидатов в порядке
+ * предпочтения; выбор первого из них — {@link #selectBestTemplate}.
+ *
+ * <p><b>Почему кандидаты дедуплицируются по цепочке версий.</b> По ADR-023 версии одного шаблона —
+ * это отдельные строки {@code Template}, связанные {@code parentTemplateId}, и опубликованных
+ * строк в цепочке может быть несколько. Без дедупликации в кандидатах оказывались все версии, и
+ * при равном приоритете выбор между ними был недетерминирован — на практике побеждал самый старый
+ * шаблон, поэтому новые версии не использовались вовсе (найдено при рантайм-проверке).
+ *
+ * <p><b>Известное ограничение.</b> {@code attributeConditions} поддерживает операторы
+ * {@code eq}, {@code gte}, {@code lte}, {@code in}; перечисленные в критерии приёмки 7 тикета
+ * PHASE-15 операторы {@code gt}, {@code lt}, {@code contains} не реализованы — неизвестный оператор
+ * даёт «не совпало» ({@code false}), а не {@code UnsupportedOperationException}.
+ */
 @Service
 @RequiredArgsConstructor
 public class MatchService {
@@ -25,6 +41,21 @@ public class MatchService {
     private final TemplateRepository templateRepository;
     private final ApplicabilityRuleRepository applicabilityRuleRepository;
 
+    /**
+     * Отбирает опубликованные шаблоны, применимые к снимку сущности, в порядке предпочтения.
+     *
+     * <p>Порядок задан тремя ключами: приоритет правила {@code ruleIdx} по возрастанию (шаблон без
+     * правил — «универсальный»: он матчится всегда и получает {@code Integer.MAX_VALUE}, то есть
+     * идёт последним, решение открытого вопроса 3 тикета PHASE-15), затем версия по убыванию, затем
+     * {@code createdAt} по убыванию. Сортировка только по {@code ruleIdx} приводила к тому, что при
+     * равном приоритете выбирался произвольный (на практике — самый старый) шаблон.
+     *
+     * @param entitySnapshot снимок сущности: тип, подтип и атрибуты, по которым проверяются правила;
+     *                       атрибуты берутся из него, а не из {@code EntityAdapter}, чтобы подбор
+     *                       учитывал данные конкретного запроса
+     * @return кандидаты от лучшего к худшему; пустой список, если не подошёл ни один шаблон
+     *         (решение об ошибке принимает {@link #selectBestTemplate})
+     */
     public List<Template> findMatchingTemplates(EntitySnapshot entitySnapshot) {
         List<Template> allPublished = templateRepository.findByStatus(LifecycleStatus.PUBLISHED);
         Map<UUID, Template> publishedById = new HashMap<>();
@@ -119,6 +150,15 @@ public class MatchService {
         return root;
     }
 
+    /**
+     * Берёт лучшего кандидата — первый элемент списка, уже упорядоченного
+     * {@link #findMatchingTemplates}. Вызывающий код не должен переупорядочивать список.
+     *
+     * @param matchingTemplates результат {@link #findMatchingTemplates}; пустой список означает,
+     *                          что применимого опубликованного шаблона нет
+     * @throws NoMatchingTemplateException если список пуст — автоподбор без подходящего шаблона
+     *                                     не может создать процесс
+     */
     public Template selectBestTemplate(List<Template> matchingTemplates) {
         if (matchingTemplates.isEmpty()) {
             throw new NoMatchingTemplateException("No templates match the entity");
@@ -126,6 +166,11 @@ public class MatchService {
         return matchingTemplates.get(0);
     }
 
+    /**
+     * {@code true}, если правило применимо к снимку. Пустой ({@code null}/без элементов) список
+     * типов, подтипов или условий атрибутов — это «без ограничения», а не «не совпадает»: только
+     * так «универсальное» правило может матчиться на любую сущность.
+     */
     private boolean ruleMatches(ApplicabilityRule rule, EntitySnapshot snapshot) {
         // Check entity type
         if (rule.getEntityTypes() != null && !rule.getEntityTypes().isEmpty()) {
@@ -173,6 +218,12 @@ public class MatchService {
         return true;
     }
 
+    /**
+     * Проверяет одно условие правила: {@code condition} — карта с оператором
+     * ({@code eq}/{@code gte}/{@code lte}/{@code in}). Отсутствующий у сущности атрибут считается
+     * несовпадением, а не ошибкой конфигурации, поэтому некорректная карта условий приводит просто
+     * к тому, что шаблон не подходит.
+     */
     @SuppressWarnings("unchecked")
     private boolean attributeMatches(
             String attrName,

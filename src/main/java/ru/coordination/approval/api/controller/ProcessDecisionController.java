@@ -37,6 +37,15 @@ public class ProcessDecisionController {
     private final DecisionQueryService decisionQueryService;
     private final DecisionMapper decisionMapper;
 
+    /**
+     * Все решения процесса — история голосования целиком, собранная запросом
+     * {@code DecisionRepository.findByProcessId} (JOIN через участника, итерацию и этап).
+     *
+     * <p>Отвечает {@code 200}; {@code 404} не бросается никогда, хотя Swagger-аннотация его
+     * обещает: отсутствие процесса даёт пустой список, а не ошибку. Обращение
+     * {@link DecisionMapper} к {@code decision.participant} безопасно: у ленивого прокси
+     * идентификатор читается без инициализации, поэтому отдельная транзакция не нужна.
+     */
     @GetMapping
     @Operation(summary = "Получить решения процесса",
                description = "Возвращает все решения, принятые участниками процесса")

@@ -16,12 +16,25 @@ import org.springframework.dao.InvalidDataAccessApiUsageException;
  */
 final class ExceptionCauses {
 
+    /**
+     * Предел обхода цепочки {@code getCause()}: защита от зацикливания, если исключения
+     * ссылаются друг на друга. Глубже этого уровня причина не ищется — метод вернёт {@code null},
+     * и {@link GlobalExceptionHandler} отдаст {@code 500} вместо {@code 400}.
+     */
     private static final int MAX_DEPTH = 10;
 
     private ExceptionCauses() {
     }
 
     /**
+     * Удобная обёртка над {@link #findCause}: отвечает, есть ли в цепочке причин
+     * {@link IllegalArgumentException}.
+     *
+     * <p><b>Не используется:</b> {@link GlobalExceptionHandler#handleDataAccess} вызывает
+     * {@link #findCause} напрямую, потому что ему нужен сам объект причины — из него берётся
+     * сообщение для клиента. Метод оставлен как точка расширения, но при ревью его стоит либо
+     * задействовать, либо удалить.
+     *
      * @return {@code true}, если в цепочке причин есть {@code IllegalArgumentException}
      */
     static boolean hasIllegalArgumentCause(Throwable throwable) {

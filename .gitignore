@@ -28,3 +28,5 @@ Thumbs.db
 .env
 *.local.yml
 application-local.yml
+# Временные артефакты проверок из doc/tools (каталог создаётся скриптами и не коммитится).
+.build-tmp/

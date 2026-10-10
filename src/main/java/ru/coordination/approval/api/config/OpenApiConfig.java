@@ -9,6 +9,14 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.List;
 
+/**
+ * Метаданные OpenAPI-описания REST API (springdoc): заголовок, версия, контакты и список
+ * серверов, попадающие в Swagger UI и в {@code /v3/api-docs}.
+ *
+ * <p>Список серверов здесь статический: dev и «production» прописаны строкой
+ * ({@code 07_api_contract.md} §2). Если адрес сервиса различается по окружениям, это место
+ * придётся параметризовать — сейчас переопределить его через конфигурацию нельзя.
+ */
 @Configuration
 public class OpenApiConfig {
 

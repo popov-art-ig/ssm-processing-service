@@ -20,19 +20,39 @@ import ru.coordination.approval.exception.RequiredSlotNotResolvedException;
  * {@link SlotTemplate#isRequired()} шаблона. Это давало ложные срабатывания на маршрутах, где
  * все слоты необязательные, и одновременно пропускало незаполненные обязательные слоты, если
  * хотя бы один другой слот был заполнен (находка аудита).
+ *
+ * <p>Сверка неполная: проверяется лишь наличие участников, но не то, что каждый обязательный слот
+ * получил своего. Кроме того, не реализованы объявленные в критериях приёмки PHASE-15 проверки
+ * «процесс без этапов → {@code IllegalStateException}» (фактически бросается
+ * {@link IllegalArgumentException}) и «дедлайн следующего этапа раньше предыдущего»
+ * ({@code IllegalStateException}).
  */
 @Service
 @RequiredArgsConstructor
 public class RouteValidatorService {
 
+    /**
+     * Проверяет только структуру маршрута, без сверки с шаблоном: эквивалентно
+     * {@code validate(process, null)}, то есть требует хотя бы одного участника в каждом этапе.
+     * Вызывать этот вариант, когда этапы шаблона недоступны, — иначе незаполненные необязательные
+     * слоты дадут ложное срабатывание.
+     *
+     * @throws IllegalArgumentException если у процесса нет ни одного этапа или у этапа нет итерации
+     * @throws RequiredSlotNotResolvedException если в первом этапе/итерации нет ни одного участника
+     */
     public void validate(ProcessInstance process) {
         validate(process, null);
     }
 
     /**
+     * @param process        сгенерированный маршрут; ожидается, что этапы уже созданы вместе с
+     *                       начальной итерацией
      * @param templateStages этапы шаблона, по которым построен маршрут; {@code null} — проверяется
      *                       только структура (без сверки обязательных слотов). Число этапов должно
      *                       совпадать с {@code process.getStages()}, иначе сверка слотов пропускается.
+     * @throws IllegalArgumentException если у процесса нет ни одного этапа или у этапа нет итерации
+     * @throws RequiredSlotNotResolvedException если по шаблону у этапа есть обязательные слоты, но
+     *         участников нет вообще
      */
     public void validate(ProcessInstance process, List<StageTemplate> templateStages) {
         List<StageInstance> stages = process.getStages();

@@ -18,6 +18,15 @@ public class ActionRegistry {
     private final ActionRegistryRepository repository;
     private final ComponentResolver componentResolver;
 
+    /**
+     * Резолвит код action'а в бин на каждый вызов перехода; {@code isActive} проверяется
+     * повторно по тем же причинам, что и в {@link GuardRegistry} — запись реестра может быть
+     * снята уже после того, как карта прошла валидацию.
+     *
+     * @throws UnknownActionException если запись отсутствует или неактивна
+     * @throws ru.coordination.approval.engine.exception.ComponentResolutionException если
+     *         {@code handler} записи не резолвится в бин
+     */
     public Action resolve(String code) {
         ActionRegistryEntry entry = repository.findById(code)
                 .filter(ActionRegistryEntry::isActive)

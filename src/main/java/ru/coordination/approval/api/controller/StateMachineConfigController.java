@@ -21,6 +21,20 @@ import ru.coordination.approval.engine.model.StateMachineConfigRepository;
 import ru.coordination.approval.engine.validation.TransitionMapValidator;
 import ru.coordination.approval.engine.validation.TransitionMapViolation;
 
+/**
+ * Чтение конфигураций карт переходов и их валидация — {@code 07_api_contract.md} §23 (группа 14
+ * «Конфигурация карт переходов»), префикс {@code /api/v1/admin/state-machines}.
+ *
+ * <p>Группа реализована в урезанном виде: контракт описывает также {@code POST /configs} и
+ * жизненный цикл конфигурации ({@code publish}/{@code deprecate}/{@code archive}), здесь — только
+ * чтение и {@link #validateConfig}. Валидация выполняется {@link TransitionMapValidator} — тем же
+ * кодом, что проверяет карты при старте приложения, поэтому ответ эндпоинта совпадает с тем, что
+ * движок считает ошибкой конфигурации ({@code 05_guards_actions_registry.md} §7).
+ *
+ * <p>DTO собирается вручную ({@code toDto}), а не маппером: {@code process_type} у карты шаблона
+ * ({@code entity_type = TEMPLATE}, V25) равен {@code null}, и незащищённый {@code .name()} уже
+ * давал {@code 500} на чтении карт.
+ */
 @RestController
 @RequestMapping("/api/v1/admin/state-machines")
 @RequiredArgsConstructor
@@ -30,6 +44,15 @@ public class StateMachineConfigController {
     private final StateMachineConfigRepository stateMachineConfigRepository;
     private final TransitionMapValidator transitionMapValidator;
 
+    /**
+     * Все версии всех карт переходов — без фильтров и пагинации, хотя контракт §23.1
+     * предусматривает {@code entityType}/{@code processType}/{@code status}.
+     *
+     * <p>Отвечает {@code 200}. Версии не схлопываются: одна и та же карта присутствует в списке
+     * столько раз, сколько версий зарегистрировано, и клиент сам выбирает актуальную по
+     * {@code version}. Ошибок уровня домена нет — исключение составляет ветка {@code toDto} с
+     * {@code null} в {@code process_type} (см. Javadoc класса).
+     */
     @GetMapping
     @Operation(summary = "Получить список конфигураций",
                description = "Возвращает все конфигурации конечных автоматов")
@@ -42,6 +65,16 @@ public class StateMachineConfigController {
         return ResponseEntity.ok(configs.stream().map(this::toDto).toList());
     }
 
+    /**
+     * Одна конфигурация со всеми состояниями и переходами — то, по чему движок строит модель
+     * переходов.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — конфигурации с таким {@code configId} нет
+     * ({@link EntityNotFoundException}). Версия здесь фиксирована самим идентификатором: переходы
+     * выполняются по той версии, которая записана в {@code ProcessInstance.configVersion}
+     * (Snapshot-on-Start, ADR-003), поэтому чтение «текущей» версии карты не говорит о том, по
+     * какой версии работает конкретный процесс.
+     */
     @GetMapping("/{configId}")
     @Operation(summary = "Получить конфигурацию",
                description = "Возвращает детальную информацию о конфигурации конечного автомата")

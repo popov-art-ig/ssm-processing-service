@@ -10,9 +10,28 @@ import ru.coordination.approval.engine.TransitionContext;
 import ru.coordination.approval.engine.registry.Guard;
 
 /**
- * G-P-009 «Целевой этап входит в список allowedReturnStages» (PHASE-08).
- * PHASE-08: упрощение — разрешаем возврат на любой этап не позже этапа, ушедшего на доработку.
- * TODO PHASE-14: проверить allowedReturnStages из шаблона.
+ * G-RT-001 «Корректная цель возврата» (PHASE-08, источник: {@code 05_guards_actions_registry.md}
+ * §4.4). Резолвится {@code guard_registry.handler = 'isTargetStageAllowedGuard'} (миграция V23,
+ * код реестра {@code IsTargetStageAllowed}); включён в guards перехода {@code ResumeProcess}
+ * ({@code OnRework → InProgress}, {@code USER_ACTION}).
+ *
+ * <p><b>Контракт.</b> {@code true} — выбранный этап допустим как цель возврата: он существует
+ * ({@code targetStageOrderIdx >= 0}) и не находится позже этапа, ушедшего на доработку
+ * ({@code targetStageOrderIdx <= onReworkStage.orderIdx}); {@code false} — параметр не передан,
+ * этапа {@code OnRework} в процессе нет или цель лежит дальше него. Побочных эффектов нет.
+ *
+ * <p><b>Заглушка/упрощение.</b> Спецификация требует проверять вхождение целевого этапа в
+ * {@code stage.allowedReturnStages} (§4.4, а также G-RT-002 «есть несколько целей возврата» для
+ * показа модалки выбора). Здесь список разрешённых целей не читается вообще: разрешён возврат на
+ * любой этап не позже ушедшего на доработку, то есть ограничение по данным шаблона не работает и
+ * вернуться можно на этап, который шаблон запрещал. Буквальная проверка
+ * {@code allowedReturnStages} отнесена к фазе генерации маршрута (формально помечена как
+ * PHASE-14 в {@code TODO} класса; по {@code doc/REMAINING_PHASES.md} генерация маршрута —
+ * PHASE-15, поэтому {@code TODO} без номера тикета не даёт точной адресации замены).
+ *
+ * <p><b>Расхождение в коде реестра.</b> Миграция V23 приписывает условию код {@code G-P-009}, но
+ * в спецификации {@code G-P-009} — это {@code AnyStageRejected} (§4.1), а корректная цель
+ * возврата описана как {@code G-RT-001} (§4.4).
  *
  * <p>Два исправления относительно первой версии:
  * <ul>
@@ -30,6 +49,10 @@ public class IsTargetStageAllowedGuard implements Guard {
 
     private final StageRepository stageRepository;
 
+    /**
+     * @return {@code true}, если {@code targetStageOrderIdx} неотрицателен и не превышает
+     *         {@code orderIdx} этапа, ушедшего на доработку
+     */
     @Override
     public boolean evaluate(TransitionContext context) {
         if (!(context.entity() instanceof ProcessInstance process)) {

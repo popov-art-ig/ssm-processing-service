@@ -22,6 +22,20 @@ import ru.coordination.approval.domain.process.ProcessInstance;
 import ru.coordination.approval.domain.process.StageInstance;
 import ru.coordination.approval.service.ProcessService;
 
+/**
+ * Процессы согласования — {@code 07_api_contract.md} §12 (группа 3 «Процессы»), префикс
+ * {@code /api/v1/processes}.
+ *
+ * <p>Запись делегируется {@link ProcessService} (переходы карты PROCESS через
+ * {@code TransitionEngine}), чтение — {@link ProcessViewService}, который отдаёт агрегат
+ * «процесс + этапы + итерации + участники» (ADR-020). Контроллер не маппит сущности сам:
+ * read-only транзакция view-сервиса держит сессию открытой, пока маппер обходит ленивые
+ * коллекции.
+ *
+ * <p>Эндпоинтов {@code submit}/{@code approve-route}/{@code reject-route} (§12.5–12.7, тип
+ * UNIFIED) здесь нет: переходы {@code SubmitRoute}/{@code ApproveRoute}/{@code RejectRoute} не
+ * зарегистрированы в картах — сценарий UNIFIED вынесен в отдельную фазу.
+ */
 @RestController
 @RequestMapping("/api/v1/processes")
 @RequiredArgsConstructor
@@ -31,6 +45,15 @@ public class ProcessController {
     private final ProcessService processService;
     private final ProcessViewService processViewService;
 
+    /**
+     * Создаёт процесс из снимка сущности: {@link ProcessService#createProcess} подбирает шаблон по
+     * правилам применимости и генерирует маршрут, после чего ответ собирается
+     * {@link ProcessViewService#getById}.
+     *
+     * <p>Отвечает {@code 201 Created}. {@code 400} — тело не прошло {@code @Valid};
+     * {@code 404} — ни один шаблон не подошёл ({@link EntityNotFoundException} из генератора
+     * маршрута). Процесс создаётся в статусе {@code Draft}: маршрут сгенерирован, но не запущен.
+     */
     @PostMapping
     @Operation(summary = "Создать процесс согласования",
                description = "Создает новый процесс на основе снимка сущности. Шаблон подбирается автоматически по правилам применимости.")
@@ -47,6 +70,13 @@ public class ProcessController {
         return ResponseEntity.status(HttpStatus.CREATED).body(processViewService.getById(created.getId()));
     }
 
+    /**
+     * Детальное представление процесса (ADR-020): этапы, итерации и участники собираются
+     * {@link ProcessViewService#getById} внутри read-only транзакции.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — процесса нет ({@link EntityNotFoundException} из
+     * {@link ProcessService#getById}).
+     */
     @GetMapping("/{processId}")
     @Operation(summary = "Получить процесс по ID",
                description = "Возвращает детальную информацию о процессе, включая все этапы, итерации и участников")
@@ -61,6 +91,16 @@ public class ProcessController {
             @PathVariable UUID processId) {
         return ResponseEntity.ok(processViewService.getById(processId));
     }
+    /**
+     * Запускает процесс: {@link ProcessService#startProcess} выполняет переход
+     * {@code Draft → InProgress} (actions активации первого этапа), после чего агрегат
+     * перечитывается {@link ProcessViewService#getById}.
+     *
+     * <p>Отвечает {@code 200}; {@code 404} — процесса нет; {@code 409} — статус не {@code Draft}
+     * ({@link IllegalStateException} из явного предусловия сервиса). Предусловие проверяется в
+     * сервисе, а не здесь, потому что из {@code InProgress} переход по {@code USER_ACTION} тоже
+     * существует ({@code ProcessRework}) и без проверки повторный запуск выглядел бы как успех.
+     */
     @PostMapping("/{processId}/start")
     @Operation(summary = "Запустить процесс",
                description = "Переводит процесс из состояния Draft в InProgress")
@@ -80,6 +120,18 @@ public class ProcessController {
         return ResponseEntity.ok(processViewService.getById(processId));
     }
 
+    /**
+     * Отзывает процесс: {@link ProcessService#recall} выполняет переход
+     * {@code InProgress → Recalled}, а причина уходит в параметры перехода и попадает в
+     * {@code audit_event.payload}.
+     *
+     * <p>Отвечает {@code 200} с перечитанным агрегатом; {@code 404} — процесса нет. Известные
+     * ограничения: результат перехода не проверяется, поэтому при отказе guard'а
+     * {@code IsRecallRequest} ответ всё равно {@code 200} с прежним статусом, а если для текущего
+     * статуса подходящего перехода нет вообще, движок бросит
+     * {@code NoApplicableTransitionException} и обработчик отдаст {@code 500}, хотя по смыслу это
+     * конфликт состояния ({@code 409}).
+     */
     @PostMapping("/{processId}/recall")
     @Operation(summary = "Отозвать процесс",
                description = "Переводит процесс из InProgress/OnRework в состояние Recalled")
@@ -97,6 +149,18 @@ public class ProcessController {
         return ResponseEntity.ok(processViewService.getById(processId));
     }
 
+    /**
+     * Возобновляет процесс после доработки: {@link ProcessService#resume} выполняет переход
+     * {@code OnRework → InProgress} с активацией целевого этапа.
+     *
+     * <p>Контракт (§12.9) оперирует {@code targetStageId}, а переход {@code ResumeProcess}
+     * получает порядковый индекс этапа, который читает guard {@code IsTargetStageAllowedGuard};
+     * индекс восстанавливается здесь по списку этапов процесса. Поэтому неизвестный
+     * {@code targetStageId} — это {@code 404} ({@link EntityNotFoundException}), а не {@code 400},
+     * и ответ {@code 200} не означает, что этап активирован: отказ guard'а движок вернёт как
+     * «переход не выполнен» и контроллер этого не заметит. {@code 409} — процесс не в статусе
+     * {@code OnRework} ({@link IllegalStateException} из сервиса).
+     */
     @PostMapping("/{processId}/resume")
     @Operation(summary = "Возобновить процесс после доработки",
                description = "Переводит процесс из OnRework обратно в InProgress с указанием целевого этапа")
@@ -124,6 +188,16 @@ public class ProcessController {
         return ResponseEntity.ok(processViewService.getById(processId));
     }
 
+    /**
+     * Постраничный список процессов через {@link ProcessViewService#list}: фильтры уходят в
+     * {@code Specification}, сортировка фиксирована — {@code createdAt DESC}, размер страницы
+     * зажимается сверху.
+     *
+     * <p>Отвечает {@code 200}. Пустые строковые фильтры трактуются как отсутствующие, поэтому
+     * {@code ?status=} не сужает выборку. Ограничение размера страницы живёт в
+     * {@link ProcessService#listProcesses} (значение больше допустимого молча урезается, а не
+     * отвергается).
+     */
     @GetMapping
     @Operation(summary = "Получить список процессов",
                description = "Возвращает постраничный список процессов с возможностью фильтрации")

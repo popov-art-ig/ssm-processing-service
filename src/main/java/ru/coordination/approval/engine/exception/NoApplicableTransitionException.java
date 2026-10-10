@@ -12,6 +12,13 @@ import ru.coordination.approval.domain.statemachine.TriggerType;
  */
 public class NoApplicableTransitionException extends RuntimeException {
 
+    /**
+     * @param entityType тип сущности, для которого запрошен переход
+     * @param fromState  текущее состояние сущности на момент вызова
+     * @param trigger    триггер, по которому переход искался, — в паре с {@code fromState} он и
+     *                   составляет ключ, по которому не нашлось ни одной активной строки
+     *                   {@code transition_config}
+     */
     public NoApplicableTransitionException(EntityType entityType, String fromState, TriggerType trigger) {
         super("No active transition configured for entityType=%s, fromState=%s, trigger=%s"
                 .formatted(entityType, fromState, trigger));

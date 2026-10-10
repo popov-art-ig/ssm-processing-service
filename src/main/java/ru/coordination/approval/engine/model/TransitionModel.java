@@ -22,6 +22,16 @@ import ru.coordination.approval.domain.statemachine.TriggerType;
  * новый снимок; какую версию конфига запросить (и, соответственно, продолжать ли работать по
  * старой версии после republish) решает вызывающий код (Snapshot-on-Start — вне объёма этой
  * фазы, см. тикет).
+ *
+ * @param entityType      тип сущности, для которого построена карта; {@code TransitionEngine}
+ *                        сверяет его с запрошенным, чтобы переход не выполнился по чужой карте
+ * @param configId        id версии конфига, по которой построена модель
+ * @param statesByCode    состояния карты по коду; {@code TransitionEngine} их пока не читает
+ *                        (переход выполняется по {@code toState} перехода, а существование
+ *                        состояния проверяет валидатор) — поле модели остаётся заделом на работу
+ *                        с {@code is_initial}/{@code is_terminal}/{@code metadata}
+ * @param transitionsByKey активные переходы, сгруппированные по {@code (fromState, trigger)} и
+ *                        отсортированные по приоритету
  */
 public record TransitionModel(
         EntityType entityType,

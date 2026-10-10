@@ -35,6 +35,11 @@ public class PreviousStageCompletedGuard implements Guard {
 
     private final StageRepository stageRepository;
 
+    /**
+     * @return {@code true}, если предыдущий этап маршрута уже в финальном статусе, либо если
+     *         предыдущего этапа нет (первый этап); {@code false}, если он ещё не завершён или не
+     *         найден в БД
+     */
     @Override
     public boolean evaluate(TransitionContext context) {
         StageInstance stage = (StageInstance) context.entity();

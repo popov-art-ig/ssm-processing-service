@@ -30,28 +30,47 @@ import ru.coordination.approval.domain.common.BaseEntity;
 @SuperBuilder
 public class ApplicabilityRule extends BaseEntity {
 
+    /** Версия шаблона, к которой относится правило (ADR-023: правила принадлежат версии). */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "template_id", nullable = false)
     private Template template;
 
+    /**
+     * Порядок правила внутри шаблона. Побеждает первое подошедшее правило, и его {@code ruleIdx}
+     * используется как приоритет шаблона при подборе ({@code MatchService} сортирует кандидатов по
+     * этому значению по возрастанию), поэтому нумерация задаёт старшинство шаблонов.
+     */
     @Column(name = "rule_idx", nullable = false)
     private Integer ruleIdx;
 
+    /**
+     * Допустимые типы сущностей (значения {@code EntityType} в виде строк). Пустой список — без
+     * ограничения по типу ({@code MatchService.ruleMatches}).
+     */
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "entity_types", columnDefinition = "text[]", nullable = false)
     @lombok.Builder.Default
     private List<String> entityTypes = List.of();
 
+    /**
+     * Допустимые подтипы сущностей. Пустой список — без ограничения по подтипу; для сущности без
+     * подтипа ({@code null}) правило с непустым списком не подходит.
+     */
     @JdbcTypeCode(SqlTypes.ARRAY)
     @Column(name = "entity_subtypes", columnDefinition = "text[]", nullable = false)
     @lombok.Builder.Default
     private List<String> entitySubtypes = List.of();
 
+    /**
+     * Предикаты по атрибутам сущности (JSON): имя атрибута → условие сравнения. Все условия
+     * должны выполниться одновременно; пустая карта — без ограничений по атрибутам.
+     */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "attribute_conditions", nullable = false)
     @lombok.Builder.Default
     private Map<String, Object> attributeConditions = Map.of();
 
+    /** Время создания строки правила. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

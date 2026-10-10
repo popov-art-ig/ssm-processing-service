@@ -19,8 +19,13 @@ import org.springframework.data.repository.query.Param;
 public interface ProcessRepository extends JpaRepository<ProcessInstance, UUID>,
                                           JpaSpecificationExecutor<ProcessInstance> {
 
+    /** Все процессы, стартовавшие по этой версии шаблона; используется guard'ом {@code NoActiveProcessesGuard}. */
     List<ProcessInstance> findByTemplateRef(UUID templateRef);
 
+    /**
+     * Процесс вместе с этапами и итерациями в одном запросе ({@code JOIN FETCH}) — снимок для
+     * представления процесса в API без ленивых обращений вне транзакции (open-in-view выключен).
+     */
     @Query("SELECT p FROM ProcessInstance p " +
            "LEFT JOIN FETCH p.stages s " +
            "LEFT JOIN FETCH s.iterations i " +
@@ -30,12 +35,17 @@ public interface ProcessRepository extends JpaRepository<ProcessInstance, UUID>,
             @Param("entityId") UUID entityId
     );
 
+    /**
+     * «Мои процессы» без фильтра по статусу: процессы, где пользователь инициатор <i>или</i>
+     * ответственный, постранично. Два параметра передаются одним и тем же значением userId.
+     */
     Page<ProcessInstance> findByInitiatorIdOrResponsibleUserId(
             UUID initiatorId,
             UUID responsibleUserId,
             Pageable pageable
     );
 
+    /** То же с фильтром по статусу процесса; при {@code status == null} используется {@link #findByInitiatorIdOrResponsibleUserId}. */
     Page<ProcessInstance> findByInitiatorIdOrResponsibleUserIdAndStatus(
             UUID initiatorId,
             UUID responsibleUserId,
@@ -43,5 +53,11 @@ public interface ProcessRepository extends JpaRepository<ProcessInstance, UUID>,
             Pageable pageable
     );
 
+    /**
+     * Процесс по внешней сущности — поиск «есть ли уже процесс на этот документ». Ожидается не
+     * более одного процесса на пару: при нарушении этого ожидания метод бросает
+     * {@code IncorrectResultSizeDataAccessException} (см. замечание в
+     * {@code ApprovalViewController}).
+     */
     Optional<ProcessInstance> findByEntityTypeAndEntityId(String entityType, UUID entityId);
 }

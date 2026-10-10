@@ -14,8 +14,16 @@ import org.springframework.data.repository.query.Param;
  */
 public interface ParticipantRepository extends JpaRepository<Participant, UUID> {
 
+    /**
+     * Участники нескольких итераций одним запросом — так агрегированное представление процесса
+     * собирает задачи всех итераций этапа без {@code N+1} обращений.
+     */
     List<Participant> findByStageIterationIdIn(List<UUID> iterationIds);
 
+    /**
+     * Постраничный список задач пользователя в заданном статусе (эндпоинт «мои задачи»);
+     * вызывающий код передаёт конкретный статус, например {@code Assigned}.
+     */
     Page<Participant> findByUserIdAndStatus(UUID userId, String status, Pageable pageable);
 
     /** Число участников итерации — знаменатель для проверки «все приняли решение». */

@@ -6,6 +6,7 @@ package ru.coordination.approval.engine.exception;
  */
 public class UnknownGuardException extends RuntimeException {
 
+    /** @param code код guard'а из {@code transition_config.guards[]}, для которого нет активной записи реестра */
     public UnknownGuardException(String code) {
         super("No active guard_registry entry for code: " + code);
     }

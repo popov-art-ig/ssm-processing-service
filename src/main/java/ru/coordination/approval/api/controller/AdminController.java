@@ -16,12 +16,34 @@ import ru.coordination.approval.api.dto.process.ProcessDto;
 import ru.coordination.approval.api.dto.process.RestoreProcessRequest;
 import ru.coordination.approval.api.exception.ErrorResponse;
 
+/**
+ * Административные операции над процессами, префикс {@code /api/v1/admin}.
+ *
+ * <p>Единственный эндпоинт — восстановление из архива ({@code 07_api_contract.md} §22.2) —
+ * <b>заглушка</b>: бросает {@code UnsupportedOperationException}, вызывающий получает
+ * {@code 500 INTERNAL_ERROR} вместо описанного контрактом {@code 200}. См. Javadoc метода.
+ *
+ * <p>Путь расходится с контрактом: §22.2 описывает {@code POST /processes/{id}/restore}, здесь
+ * использован административный префикс {@code /admin}.
+ */
 @RestController
 @RequestMapping("/api/v1/admin")
 @RequiredArgsConstructor
 @Tag(name = "Administration", description = "API для административных операций")
 public class AdminController {
 
+    /**
+     * <b>Не реализован.</b> Бросает {@code UnsupportedOperationException("Not implemented yet")};
+     * обработчик исключений перехватывает её общей веткой {@code Exception}, поэтому вызывающий
+     * получает {@code 500 INTERNAL_ERROR} вместо {@code 200}. Коды {@code 404} и {@code 400},
+     * обещанные Swagger-аннотацией, тоже недостижимы — метод не доходит до поиска процесса.
+     *
+     * <p>Отсутствует не только вызов сервиса, но и сам переход: в картах PROCESS нет перехода
+     * {@code RestoreProcess}, а сервисного метода восстановления в проекте нет. Данные для
+     * операции при этом есть — {@code archive_metadata.previous_status} (V10) хранит статус,
+     * в который процесс возвращался до архивации, так что «дописать» эндпоинт одной строкой не
+     * получится: нужны регистрация перехода и action.
+     */
     @PostMapping("/processes/{processId}/restore")
     @Operation(summary = "Восстановить процесс из архива",
                description = "Восстанавливает архивированный процесс в предыдущий статус")

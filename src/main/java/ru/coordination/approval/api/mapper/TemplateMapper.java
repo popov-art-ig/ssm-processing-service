@@ -11,9 +11,26 @@ import ru.coordination.approval.domain.template.SlotTemplate;
 import ru.coordination.approval.domain.template.StageTemplate;
 import ru.coordination.approval.domain.template.Template;
 
+/**
+ * Преобразование шаблона в API-представление: {@code Template} → {@link TemplateDto},
+ * {@code StageTemplate} → {@link StageTemplateDto}, {@code SlotTemplate} → {@link SlotTemplateDto},
+ * {@code ApplicabilityRule} → {@link ApplicabilityRuleDto}.
+ *
+ * <p>Маппер обходит ленивые коллекции ({@code stages → actorSlots}, {@code applicabilityRules}),
+ * поэтому все вызовы идут внутри транзакции: контроллер помечает чтение шаблонов
+ * {@code readOnly = true}.
+ *
+ * <p>Что теряется: у слота не выводятся {@code slotType}, {@code parentSlot} и {@code dueOffset} —
+ * значит, вложенные дополнительные согласующие через API не видны; {@code enum}-поля передаются
+ * строками и защищены от {@code null}.
+ */
 @Component
 public class TemplateMapper {
 
+    /**
+     * Представление шаблона вместе с этапами, слотами этапов и правилами применимости. Обходит
+     * ленивые коллекции, поэтому вызывается внутри транзакции чтения.
+     */
     public TemplateDto toDto(Template template) {
         return new TemplateDto(
                 template.getId(),

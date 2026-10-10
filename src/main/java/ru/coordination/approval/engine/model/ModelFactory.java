@@ -29,6 +29,24 @@ public class ModelFactory {
     private final StateConfigRepository stateConfigRepository;
     private final TransitionConfigRepository transitionConfigRepository;
 
+    /**
+     * Собирает модель переходов по конкретной версии конфига.
+     *
+     * <p>Загрузка идёт по явному {@code configId}, а не по «последней опубликованной» версии
+     * пары {@code (entityType, processType)}: процесс работает по версии, зафиксированной на его
+     * старте (Snapshot-on-Start, {@code 04_state_machines.md} §2.6, §3.4; ADR-003), поэтому выбор
+     * версии — ответственность вызывающего кода, а не этого метода.
+     *
+     * <p>Сортировка кандидатов и отсев неактивных переходов сделаны один раз при сборке, а не
+     * при каждом переходе: {@code TransitionModel.candidates} должен вернуть уже готовый порядок
+     * обхода, одинаковый для всех вызовов движка.
+     *
+     * @param configId id версии {@code state_machine_config}; id другой версии или другой машины
+     *                 состояний даст модель, несовместимую с сущностью (проверка
+     *                 {@code entityType} — в {@code TransitionEngine})
+     * @throws IllegalArgumentException если конфига с таким id нет — вероятная причина в
+     *         рассинхронизации {@code ProcessInstance.configVersion} и таблицы конфигов
+     */
     @Transactional(readOnly = true)
     public TransitionModel loadModel(UUID configId) {
         StateMachineConfig config = configRepository.findById(configId)

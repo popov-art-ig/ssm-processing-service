@@ -32,26 +32,45 @@ import ru.coordination.approval.domain.common.BaseEntity;
 @SuperBuilder
 public class StageIteration extends BaseEntity {
 
+    /** Этап-владелец итерации; участники и решения всегда принадлежат итерации, а не этапу. */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stage_id", nullable = false)
     private StageInstance stage;
 
+    /**
+     * Номер круга этапа, начиная с 1 (уникален в рамках этапа —
+     * {@code ux_stage_iteration}). Новая итерация создаётся при повторной активации этапа;
+     * guards и actions работают с последней, то есть с максимальным номером.
+     */
     @Column(name = "iteration_idx", nullable = false)
     private Integer iterationIdx;
 
-    /** Active / Completed / Superseded / Cancelled — валидируется через StatusRegistry (entityType=STAGE_ITERATION). */
+    /**
+     * Статус круга. Значения заявлены как Active / Completed / Superseded / Cancelled
+     * (валидируется через {@code StatusRegistry}, entityType=STAGE_ITERATION), но переходов этапа,
+     * которые меняли бы статус итерации, в картах нет: {@code SetStageCompletedAt} обновляет
+     * только {@code stage_instance.completed_at}, а действия возврата меняют статусы этапов.
+     */
     @Column(name = "status", length = 100, nullable = false)
     private String status;
 
+    /** Время начала круга (момент создания итерации). */
     @Column(name = "started_at", nullable = false)
     private Instant startedAt;
 
+    /** Время закрытия круга; {@code null}, пока итерация активна. */
     @Column(name = "completed_at")
     private Instant completedAt;
 
+    /** Время создания строки. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /**
+     * Участники этого круга: при каждой новой итерации состав создаётся заново, поэтому решение
+     * участника относится именно к своей итерации ({@code ParticipantRepository} ищет по
+     * {@code stageIterationId}, а не по этапу).
+     */
     @OneToMany(mappedBy = "stageIteration", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
     @lombok.Builder.Default
     private List<Participant> participants = new ArrayList<>();

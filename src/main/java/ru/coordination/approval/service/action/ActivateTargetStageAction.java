@@ -21,9 +21,38 @@ import ru.coordination.approval.engine.model.StateMachineConfigRepository;
 import ru.coordination.approval.engine.registry.Action;
 
 /**
- * A-RT-005 «Создаёт новую итерацию целевого этапа, клонирует участников, активирует этап» (PHASE-08).
- * PHASE-08: не клонирует additionalApprovers (список пуст в новой итерации).
- * TODO PHASE-10: клонировать дополнительных согласующих по правилам «кто назначил».
+ * A-RT-005 «Активировать целевой этап»: создаёт новую итерацию целевого этапа, клонирует в неё
+ * участников прошлой итерации и активирует этап вложенным переходом
+ * ({@code OnRework/Approved/ApprovedWithComments → Active}, {@code ReactivateStage}) (PHASE-08,
+ * источник: {@code 05_guards_actions_registry.md} §5.3). Резолвится
+ * {@code action_registry.handler = 'activateTargetStageAction'} (миграция V23); включён в actions
+ * перехода {@code ResumeProcess} ({@code OnRework → InProgress}, {@code USER_ACTION}), всегда
+ * после {@link RejectStagesFromAction}.
+ *
+ * <p><b>Какое состояние меняет.</b> Добавляет в целевому этапу новую
+ * {@link StageIteration} со статусом {@code Active} и клонами участников в статусе
+ * {@code Pending} ({@code assignedAt}, {@code dueAt} — {@code null}), а затем переводит сам этап
+ * в {@code Active} явным переходом state machine — прямое присваивание {@code stage.status} не
+ * используется, поскольку состояние меняется только через переход (ADR-002/ADR-028, тот же
+ * принцип, что и в {@link AssignStageTasksAction}).
+ *
+ * <p><b>Почему именно {@code SYSTEM_ACTION} и та же транзакция.</b> Контекст вложенного перехода
+ * создаётся от имени {@code ActorType.SYSTEM} с копией {@code actorId} вызывающего кода, а вызов
+ * {@link TransitionEngine#transition} идёт в той же транзакции, что и внешний {@code ResumeProcess}
+ * ({@code PROPAGATION.REQUIRED} по умолчанию) — если этап не активируется, откатывается весь
+ * возврат из доработки.
+ *
+ * <p><b>Почему {@code notPerformed} — ошибка, а не тихий no-op.</b> К этому моменту переходы
+ * {@code ReactivateStage} объявлены без guards (V23) и отказ возможен только при нарушении
+ * конфигурации; молчаливое продолжение оставило бы процесс {@code InProgress} с неактивным
+ * целевым этапом, то есть процесс «завис» бы без единого активного этапа.
+ *
+ * <p><b>Упрощение.</b> Дополнительные согласующие не клонируются — список
+ * {@code additionalApprovers} у новой итерации пуст (PHASE-08), иерархия доп. согласующих
+ * восстанавливается в PHASE-10. Клонирование участников копирует {@code userId},
+ * {@code organizationId}, {@code role}, {@code actorSlotRef}, {@code resolvedRoleRef} и
+ * {@code orderIdx}, но не {@code participant.decision}: решения предыдущей итерации в новую
+ * попытку не переносятся.
  */
 @Component("activateTargetStageAction")
 @RequiredArgsConstructor
@@ -32,6 +61,18 @@ public class ActivateTargetStageAction implements Action {
     private final StateMachineConfigRepository configRepository;
     private final TransitionEngine transitionEngine;
 
+    /**
+     * Создаёт новую итерацию целевого этапа с клонами участников и переводит этап в
+     * {@code Active}.
+     *
+     * @param context контекст перехода {@code ResumeProcess}; обязательный параметр —
+     *                {@code targetStageOrderIdx} (индекс целевого этапа), его отсутствие
+     *                приводит к {@link IllegalArgumentException}
+     * @throws IllegalArgumentException если этап с переданным {@code targetStageOrderIdx} в
+     *         процессе не найден
+     * @throws IllegalStateException если этап не активировался ({@code performed == false}) или у
+     *         него нет ни одной итерации для клонирования участников
+     */
     @Override
     public void execute(TransitionContext context) {
         ProcessInstance process = (ProcessInstance) context.entity();

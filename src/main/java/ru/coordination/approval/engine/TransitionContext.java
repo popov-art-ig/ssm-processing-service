@@ -25,6 +25,12 @@ public record TransitionContext(
         ActorType actorType,
         Map<String, Object> parameters) {
 
+    /**
+     * {@code parameters} копируется и не может быть {@code null}: guards/actions не должны
+     * получать изменяемую ссылку на состояние вызывающего кода и не должны проверять карту
+     * параметров на {@code null} — триггеры без параметров (например, таймерные) передают
+     * «ничего» именно так.
+     */
     public TransitionContext {
         parameters = parameters == null ? Map.of() : Map.copyOf(parameters);
     }

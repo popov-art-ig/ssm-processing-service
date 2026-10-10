@@ -12,5 +12,12 @@ import ru.coordination.approval.engine.TransitionContext;
 @FunctionalInterface
 public interface Action {
 
+    /**
+     * Побочный эффект перехода: вызывается только для уже выбранного перехода, один раз и в
+     * списке {@code actions[]}, то есть после записи нового {@code status} (см.
+     * {@code TransitionEngine.execute}) — action, проверяющий состояние связанных сущностей,
+     * видит статус текущей сущности уже изменённым. Возврата значения нет: неуспех action
+     * выражается исключением, которое откатывает всю транзакцию перехода.
+     */
     void execute(TransitionContext context);
 }

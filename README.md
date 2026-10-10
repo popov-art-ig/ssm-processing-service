@@ -237,6 +237,25 @@ docker run -d --name ssm-processing-service --network <project>_default \
 несуществующие методы доменных билдеров), из-за чего `./gradlew build` падал ещё до запуска
 тестов, а тесты не выполнялись вовсе.
 
+## Комментарии в коде
+
+Соглашение о комментариях — `doc/CODE_COMMENTS.md`; отчёт о покрытии и найденных дефектах —
+`doc/JAVADOC_COVERAGE.md`. Кратко: Javadoc обязателен для типов, публичных методов и
+неочевидных полей, ценность комментария — в ответе на вопрос «почему» (порядок операций,
+выбор статуса, отклонение от спецификации), а ссылки даются на разделы `doc/arch/*.md` и
+`doc/tickets/PHASE-*.md`.
+
+```powershell
+# доля задокументированных типов/методов/полей (-Details, -ByPackage, -ListMissingTypes)
+powershell -ExecutionPolicy Bypass -File doc/tools/CommentCoverage.ps1
+# доказательство, что diff меняет только комментарии
+powershell -ExecutionPolicy Bypass -File doc/tools/VerifyCommentsOnly.ps1 -Base main
+# проверка, что все {@link} указывают на существующие типы и члены
+powershell -ExecutionPolicy Bypass -File doc/tools/VerifyJavadocLinks.ps1
+# компиляция main (+ тестов с -WithTests) без Gradle, сети и Docker
+powershell -ExecutionPolicy Bypass -File doc/tools/CompileCheck.ps1 -WithTests
+```
+
 ## Валидация карты переходов
 
 Карта переходов (`transition_config` + `state_config` + реестры guard/action) проверяется
@@ -281,3 +300,6 @@ curl -X POST http://localhost:8080/api/v1/admin/state-machines/{configId}/valida
 (`00_vision_scope.md` … `12_test_scenarios.md`, ADR в `11_adr.md`). Постановки фаз для
 исполнения в этом репозитории (самодостаточные, без внешних ссылок) — `doc/tickets/`;
 процесс подготовки и приёмки тикетов — `doc/tickets/TEMPLATE.md`.
+
+Соглашение о комментариях в коде — `doc/CODE_COMMENTS.md`; отчёт о покрытии и о дефектах,
+зафиксированных в комментариях, — `doc/JAVADOC_COVERAGE.md`.

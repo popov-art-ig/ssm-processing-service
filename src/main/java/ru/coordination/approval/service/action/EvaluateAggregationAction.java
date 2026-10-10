@@ -18,15 +18,38 @@ import ru.coordination.approval.engine.model.StateMachineConfigRepository;
 import ru.coordination.approval.engine.registry.Action;
 
 /**
- * A-S-004 «Проверяет все решения участников и программно запускает один из трёх переходов этапа»
- * (PHASE-06, источник: {@code 05_guards_actions_registry.md} §5.2). Резолвится
- * {@code action_registry.handler = 'evaluateAggregationAction'} (миграция V21).
+ * «Оценить агрегацию решений» — проверяет все решения участников и программно запускает один из
+ * трёх переходов этапа (PHASE-06; модель агрегации — {@code 05_guards_actions_registry.md} §4.2,
+ * действия этапа — §5.2). Резолвится {@code action_registry.handler = 'evaluateAggregationAction'};
+ * зарегистрирован в миграции V20, а не в V21 (см. ниже). Включён в actions перехода {@code Decide}
+ * ({@code Assigned → Decided}, уровень {@code PARTICIPANT}) последним, после
+ * {@link RecordDecisionAction} и {@link RecordCommentAction}.
  *
- * <p>Вызывается как action перехода {@code Decide} уровня {@code PARTICIPANT} (после
- * {@code RecordDecision} и {@code RecordComment}). Проверяет, все ли участники текущей итерации
- * этапа приняли решение, и если да — программно запускает один из переходов {@code STAGE}:
- * {@code StageApproved}, {@code StageApprovedWithComments} или {@code StageOnRework} в зависимости
- * от режима агрегации ({@code decisionMode}).
+ * <p><b>Что здесь от спецификации, а что нет.</b> §4.2 описывает общую функцию
+ * {@code evaluateAggregation(stage)} и три guard'а-предиката над ней, но отдельного действия
+ * «выполнить агрегацию» в §5.2 нет: там {@code A-S-004} — это {@code CloseIteration}, а
+ * {@code A-S-005} — {@code AutoApproveMissing}. Приписанный реестром V20 код {@code A-S-004}
+ * поэтому не соответствует спецификации, и ссылаться на него как на определение нельзя.
+ *
+ * <p><b>Какое состояние меняет.</b> Статус {@link StageInstance} — вложенным переходом того же
+ * движка ({@code STAGE}/{@code SYSTEM_ACTION}) в один из {@code StageApproved},
+ * {@code StageApprovedWithComments} или {@code StageOnRework} в зависимости от режима агрегации
+ * ({@code decisionMode}) и от того, какой guard из тройки
+ * {@code AggregationApproved}/{@code AggregationApprovedWithComments}/{@code AggregationRework}
+ * прошёл. Состояние меняется только переходом, а не присваиванием {@code stage.status}
+ * (ADR-002/ADR-028).
+ *
+ * <p><b>Почему регистрация в V20, а не в V21.</b> Действие применяется в агрегации решений,
+ * которую описывает V21, однако его {@code action_registry} и переход-владелец {@code Decide}
+ * живут в V20. Миграции применяются по возрастанию номера, поэтому регистрация в V21 означала бы,
+ * что регистрация строки реестра выполнилась бы уже после {@code UPDATE transition_config},
+ * добавляющего действие в actions перехода. Это отмечено комментарием в V20 и воспроизводит
+ * исходный дефект «этап никогда не закрывался».
+ *
+ * <p><b>Почему {@code performed == false} — норма.</b> Действие вызывается после <i>каждого</i>
+ * решения участника, а закрывать этап можно только когда решили все. Отказ виден только в
+ * debug-логе; ошибкой он не является (в отличие от {@link ActivateNextStageAction}, где отказ
+ * означает зависший процесс).
  *
  * <p>Вложенный вызов {@link TransitionEngine#transition} выполняется в той же транзакции, что и
  * внешний переход {@code Decide}. Если ни один переход этапа не выполнен
@@ -43,6 +66,14 @@ public class EvaluateAggregationAction implements Action {
     private final TransitionEngine transitionEngine;
     private final StageRepository stageRepository;
 
+    /**
+     * Пытается закрыть этап участника перехода.
+     *
+     * @param context контекст перехода {@code Decide}; сущность — {@link Participant}, этап
+     *                берётся через {@code participant.getStageIteration().getStage()}
+     * @throws IllegalStateException если нет {@code STAGE}-конфига для типа процесса и версии
+     *         процесса (ошибка конфигурации)
+     */
     @Override
     public void execute(TransitionContext context) {
         Participant participant = (Participant) context.entity();

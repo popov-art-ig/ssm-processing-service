@@ -21,6 +21,21 @@ public class ComponentResolver {
 
     private final ApplicationContext applicationContext;
 
+    /**
+     * Резолвит {@code handler} в бин ожидаемого типа.
+     *
+     * <p>Сначала {@code handler} трактуется как имя бина — так записаны все сид-строки
+     * {@code guard_registry}/{@code action_registry} (например {@code 'isInitiatorGuard'},
+     * миграции V18–V25). Полное имя класса — запасной вариант для записей, где указан класс:
+     * он ищется через {@code Class.forName}, поэтому опечатка в handler'е не должна выглядеть
+     * как «бинов нет вообще».
+     *
+     * @throws ComponentResolutionException если handler не разрешился ни одним из двух способов:
+     *         нет бина с таким именем, нет класса с таким именем или бин второго способа не
+     *         приводится к ожидаемому типу. Известное ограничение: бин, найденный по имени, но
+     *         другого типа, приводит к {@code BeanNotOfRequiredTypeException} от Spring — она не
+     *         оборачивается (ловится только отсутствие бина) и уходит вызывающему коду как есть
+     */
     public <T> T resolve(String handler, Class<T> expectedType) {
         try {
             return applicationContext.getBean(handler, expectedType);

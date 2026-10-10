@@ -45,6 +45,11 @@ public class AllParticipantsDecidedGuard implements Guard {
         return otherParticipantCount == 0 || otherDecisionCount >= otherParticipantCount;
     }
 
+    /**
+     * @return {@code true}, если все участники текущей итерации, кроме инициатора перехода,
+     *         уже приняли решение (или участников кроме него не осталось); {@code false} — если
+     *         итерации нет, участников нет, инициатор не определён или кто-то ещё не решил
+     */
     @Override
     public boolean evaluate(TransitionContext context) {
         if (!(context.entity() instanceof StageInstance stage)) {

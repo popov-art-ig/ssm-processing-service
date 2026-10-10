@@ -31,6 +31,11 @@ import ru.coordination.approval.domain.common.BaseEntity;
 @SuperBuilder
 public class Decision extends BaseEntity {
 
+    /**
+     * Участник, принявший решение. Связь идёт на конкретную итерацию через
+     * {@link Participant#getStageIteration()}: по ней агрегация находит решения текущего круга
+     * этапа ({@code DecisionRepository.countByStageIterationId}).
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "participant_id", nullable = false)
     private Participant participant;
@@ -39,16 +44,28 @@ public class Decision extends BaseEntity {
     @Column(name = "result", length = 100, nullable = false)
     private String result;
 
+    /**
+     * Текст решения. Пишется тем же действием {@code RecordDecision} из параметра {@code comment}
+     * перехода — отдельного объекта {@link Comment} решение не создаёт.
+     */
     @Column(name = "comment")
     private String comment;
 
+    /**
+     * Признак автоматического решения. Задуман для автосогласования по сроку (действие
+     * {@code A-PA-002 RecordAutoDecision}), которое не реализовано, поэтому
+     * {@code RecordDecision} всегда пишет {@code false} и отличить «решение принято системой» от
+     * пользовательского сейчас нельзя.
+     */
     @Column(name = "auto", nullable = false)
     @lombok.Builder.Default
     private boolean auto = false;
 
+    /** Момент принятия решения. Именно по нему определяется «первое» решение в режимах агрегации. */
     @Column(name = "recorded_at", nullable = false)
     private Instant recordedAt;
 
+    /** Время создания строки. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

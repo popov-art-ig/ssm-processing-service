@@ -18,6 +18,20 @@ import ru.coordination.approval.api.exception.EntityNotFoundException;
 import ru.coordination.approval.api.mapper.*;
 import ru.coordination.approval.domain.process.*;
 
+/**
+ * Read-model для интерфейса согласования: собирает агрегированные представления, которые не
+ * совпадают ни с одной доменной сущностью (ADR-020, {@code 07_api_contract.md} §12).
+ *
+ * <p>Все методы — только чтение ({@code readOnly = true}) и возвращают DTO, а не сущности:
+ * представление для UI склеивает процесс, этапы, итерации, участников, решения, замечания и
+ * комментарии, поэтому отдать одну сущность невозможно.
+ *
+ * <p><b>Известные ограничения.</b> Данные загружаются несколькими запросами и склеиваются в
+ * памяти (это осознанный компромисс для read-model, но на большом процессе даёт заметный объём
+ * выборки); {@code dueDate} в {@link TaskDto} и сводке процесса не вычисляется — в коде оставлен
+ * {@code null} с пометкой TODO; при отсутствии процесса для сущности бросается
+ * {@link EntityNotFoundException} (404).
+ */
 @Service
 @RequiredArgsConstructor
 public class ApprovalViewService {
@@ -32,6 +46,15 @@ public class ApprovalViewService {
     private final CommentMapper commentMapper;
     private final DecisionMapper decisionMapper;
 
+    /**
+     * Агрегированное представление согласования по сущности-владельцу процесса: процесс, этапы
+     * с участниками и их решениями, замечания и комментарии. Один вызов закрывает потребности
+     * карточки согласования в UI, чтобы фронтенд не собирал её из десятка запросов.
+     *
+     * @param entityType тип сущности-владельца (например {@code DOCUMENT})
+     * @param entityId   идентификатор сущности-владельца
+     * @throws EntityNotFoundException если по паре ({@code entityType}, {@code entityId}) процесса нет
+     */
     @Transactional(readOnly = true)
     public ApprovalViewDto getApprovalView(String entityType, UUID entityId) {
         // 1. Find process with fetch join
@@ -88,6 +111,17 @@ public class ApprovalViewService {
         return new ApprovalViewDto(processDto, stagesWithDecisions, remarkDtos, commentDtos);
     }
 
+    /**
+     * Задачи пользователя: его участия в статусе {@code Assigned} по всем процессам.
+     *
+     * <p>Отбор идёт по {@code participant.status}, а не по статусу процесса: задача исчезает из
+     * списка, как только участник принял решение. Пагинация применяется на уровне запроса
+     * участников, поэтому {@code totalElements} — число задач, а не страниц.
+     *
+     * @param userId   идентификатор участника
+     * @param pageable страница и сортировка
+     * @return страница {@link TaskDto}; пустая, если у пользователя нет назначенных задач
+     */
     @Transactional(readOnly = true)
     public Page<TaskDto> getMyTasks(UUID userId, Pageable pageable) {
         Page<Participant> participants = participantRepository.findByUserIdAndStatus(userId, "Assigned", pageable);
@@ -115,6 +149,18 @@ public class ApprovalViewService {
         return new PageImpl<>(tasks, pageable, participants.getTotalElements());
     }
 
+    /**
+     * «Мои процессы»: процессы, где пользователь инициатор или ответственный, с необязательным
+     * фильтром по статусу.
+     *
+     * <p>Текущий этап сводки определяется первым этапом в статусе {@code Active} — если активного
+     * этапа нет (черновик, завершённый или отозванный процесс), поле остаётся {@code null}.
+     *
+     * @param userId   идентификатор пользователя (сравнивается и с инициатором, и с ответственным)
+     * @param status   фильтр по статусу процесса; {@code null} — без фильтра
+     * @param pageable страница и сортировка
+     * @return страница {@link ProcessSummaryDto} — краткая карточка без этапов и участников
+     */
     @Transactional(readOnly = true)
     public Page<ProcessSummaryDto> getMyProcesses(UUID userId, String status, Pageable pageable) {
         Page<ProcessInstance> processes;

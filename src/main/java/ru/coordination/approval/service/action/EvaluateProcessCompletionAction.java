@@ -16,17 +16,26 @@ import ru.coordination.approval.engine.model.StateMachineConfigRepository;
 import ru.coordination.approval.engine.registry.Action;
 
 /**
- * A-S-005 «Оценить завершение процесса» (PHASE-07, не описан явно в реестре, аналог
- * {@link EvaluateAggregationAction}). Резолвится
- * {@code action_registry.handler = 'evaluateProcessCompletionAction'} (миграция V22).
+ * «Оценить завершение процесса» — проверяет, все ли этапы процесса завершены, и программно
+ * запускает один из переходов {@code PROCESS} (PHASE-07). Резолвится
+ * {@code action_registry.handler = 'evaluateProcessCompletionAction'} (миграция V22, код реестра
+ * {@code EvaluateProcessCompletion}); включён в actions переходов {@code StageApproved} и
+ * {@code StageApprovedWithComments} (уровень {@code STAGE}) после
+ * {@link ActivateNextStageAction}. НЕ вызывается при переходе {@code StageOnRework} — возврат
+ * процесса на доработку выполняет {@link EvaluateProcessReworkAction} (PHASE-08).
  *
- * <p>Проверяет, все ли этапы процесса завершены, и если да — программно запускает один из переходов
- * {@code PROCESS}: {@code ProcessApprovedWithComments} (если хотя бы один этап
- * {@code ApprovedWithComments}) или {@code ProcessApproved} (если все этапы {@code Approved}).
+ * <p><b>Кода в спецификации нет.</b> В {@code 05_guards_actions_registry.md} §5.2 приписанный
+ * реестром V22 код {@code A-S-005} принадлежит действию {@code AutoApproveMissing}; действия
+ * «оценить завершение процесса» спецификация не описывает — она предполагает, что завершение
+ * процесса наступает по guard'ам {@code G-P-007}/{@code G-P-008}/{@code G-P-010} в переходах
+ * процесса, а не по действию этапа.
  *
- * <p>Вызывается как action переходов {@code StageApproved} и {@code StageApprovedWithComments}
- * (уровень {@code STAGE}) после {@code ActivateNextStage}. НЕ вызывается при переходе
- * {@code StageOnRework} — возврат процесса на доработку реализуется в PHASE-08.
+ * <p><b>Почему действие-аналог, а не прямой перевод процесса.</b> Процесс переводится вложенным
+ * переходом того же движка ({@code PROCESS}/{@code SYSTEM_ACTION}) — состояние меняется только
+ * через явный переход (ADR-002/ADR-028), а guards перехода
+ * ({@code AllStagesCompleted}, {@code HasComments}) сами выбирают конкретный исход. Действие
+ * лишь инициирует попытку, поэтому не дублирует логику выбора между {@code ProcessApproved} и
+ * {@code ProcessApprovedWithComments} — это делает приоритет {@code priority = 10} в V22.
  *
  * <p>Вложенный вызов {@link TransitionEngine#transition} выполняется в той же транзакции, что и
  * внешний переход этапа. Если ни один переход процесса не выполнен
@@ -41,6 +50,14 @@ public class EvaluateProcessCompletionAction implements Action {
     private final StateMachineConfigRepository stateMachineConfigRepository;
     private final TransitionEngine transitionEngine;
 
+    /**
+     * Пытается завершить процесс, если закрыт последний этап маршрута.
+     *
+     * @param context контекст перехода этапа; сущность — {@link StageInstance}, процесс берётся
+     *                из {@code stage.getProcess()}
+     * @throws IllegalStateException если нет {@code PROCESS}-конфига для типа процесса и версии
+     *         процесса (ошибка конфигурации)
+     */
     @Override
     public void execute(TransitionContext context) {
         StageInstance stage = (StageInstance) context.entity();

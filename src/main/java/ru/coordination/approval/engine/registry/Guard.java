@@ -10,5 +10,11 @@ import ru.coordination.approval.engine.TransitionContext;
 @FunctionalInterface
 public interface Guard {
 
+    /**
+     * {@code true} — условие перехода выполнено и {@code TransitionEngine} может перейти к
+     * следующему guard'у или к actions. {@code false} отклоняет только этот переход: движок
+     * пробует следующий кандидат по приоритету и не считает отказ ошибкой. Побочных эффектов
+     * быть не должно — guard может вызываться для перехода, который в итоге не выполнится.
+     */
     boolean evaluate(TransitionContext context);
 }

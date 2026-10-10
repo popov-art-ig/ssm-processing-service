@@ -337,10 +337,14 @@
 ## Связанные документы
 
 - [TEMPLATE.md](TEMPLATE.md) — шаблон для детальных тикетов
+- [DEFECTS-INDEX.md](DEFECTS-INDEX.md) — тикеты дефектов (DEFECT-01…20), найденных при
+  документировании кода: расхождения кода со спецификацией и незавершённые механизмы
 - [REMAINING_PHASES.md](../REMAINING_PHASES.md) — полный план оставшихся фаз с обоснованием
 - [PHASES_SUMMARY.md](../PHASES_SUMMARY.md) — краткая сводка всех фаз
 - [ROADMAP.md](../ROADMAP.md) — дорожная карта по кварталам
 - [doc/arch/](../arch/) — архитектурная документация (контекст для тикетов)
 - [doc/tasks/](../tasks/) — разбивка завершённых фаз на задачи
+- [doc/CODE_COMMENTS.md](../CODE_COMMENTS.md) — соглашение о комментариях в коде
+- [doc/JAVADOC_COVERAGE.md](../JAVADOC_COVERAGE.md) — покрытие Javadoc и реестр находок (§4)
 
 ---

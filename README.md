@@ -302,4 +302,5 @@ curl -X POST http://localhost:8080/api/v1/admin/state-machines/{configId}/valida
 процесс подготовки и приёмки тикетов — `doc/tickets/TEMPLATE.md`.
 
 Соглашение о комментариях в коде — `doc/CODE_COMMENTS.md`; отчёт о покрытии и о дефектах,
-зафиксированных в комментариях, — `doc/JAVADOC_COVERAGE.md`.
+зафиксированных в комментариях, — `doc/JAVADOC_COVERAGE.md`. Найденные расхождения кода со
+спецификацией разложены в тикеты — `doc/tickets/DEFECTS-INDEX.md` (DEFECT-01…20).

@@ -39,6 +39,7 @@ public class StateConfig extends BaseEntity {
     @Column(name = "code", length = 100, nullable = false)
     private String code;
 
+    /** Отображаемое имя состояния для UI-редактора карты; движок его не читает. */
     @Column(name = "display_name", length = 255, nullable = false)
     private String displayName;
 
@@ -69,6 +70,7 @@ public class StateConfig extends BaseEntity {
     @lombok.Builder.Default
     private Map<String, Object> metadata = Map.of();
 
+    /** Время создания строки состояния; техническое поле аудита, кодом не читается. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

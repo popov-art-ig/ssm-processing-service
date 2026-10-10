@@ -62,6 +62,7 @@ foreach ($file in Get-ChildItem -Recurse -File -Filter *.java $Root) {
     $methodsDoc = 0
     $fields = 0
     $fieldsDoc = 0
+    $locals = 0
     $hasFileDoc = ($lines | Select-Object -First 60 | Where-Object { $_ -match '/\*\*' } | Measure-Object).Count -gt 0
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -95,8 +96,17 @@ foreach ($file in Get-ChildItem -Recurse -File -Filter *.java $Root) {
         }
 
         if ($line -match $fieldRegex -and $line -notmatch $typeRegex -and $line -notmatch $methodRegex) {
-            $fields++
-            if ($docAbove) { $fieldsDoc++ }
+            # Отступ 5+ пробелов означает, что объявление находится внутри тела метода — это
+            # локальная переменная, а не поле класса (поля объявляются на уровне тела класса,
+            # то есть с отступом 4). Соглашение (doc/CODE_COMMENTS.md §3) локальные переменные
+            # не документирует, поэтому они считаются отдельно и в знаменатель покрытия полей
+            # не попадают.
+            if ($line -match '^\s{5,}\S') {
+                $locals++
+            } else {
+                $fields++
+                if ($docAbove) { $fieldsDoc++ }
+            }
         }
     }
 
@@ -109,6 +119,7 @@ foreach ($file in Get-ChildItem -Recurse -File -Filter *.java $Root) {
         MethodsDoc  = $methodsDoc
         Fields      = $fields
         FieldsDoc   = $fieldsDoc
+        Locals      = $locals
         AnyDoc      = $hasFileDoc
     }
 }
@@ -119,11 +130,12 @@ $methods = ($fileStats | Measure-Object -Property Methods -Sum).Sum
 $methodsDoc = ($fileStats | Measure-Object -Property MethodsDoc -Sum).Sum
 $fields = ($fileStats | Measure-Object -Property Fields -Sum).Sum
 $fieldsDoc = ($fileStats | Measure-Object -Property FieldsDoc -Sum).Sum
+$locals = ($fileStats | Measure-Object -Property Locals -Sum).Sum
 
 if ($Details) {
     $fileStats |
         Sort-Object { ($_.Methods - $_.MethodsDoc) + $_.Fields - $_.FieldsDoc } -Descending |
-        Format-Table File, TypeDoc, Methods, MethodsDoc, Fields, FieldsDoc -AutoSize |
+        Format-Table File, TypeDoc, Methods, MethodsDoc, Fields, FieldsDoc, Locals -AutoSize |
         Out-String -Width 200 |
         Write-Host
 }
@@ -154,10 +166,11 @@ if ($ByPackage) {
                 MethodsDoc = ($g | Measure-Object -Property MethodsDoc -Sum).Sum
                 Fields     = ($g | Measure-Object -Property Fields -Sum).Sum
                 FieldsDoc  = ($g | Measure-Object -Property FieldsDoc -Sum).Sum
+                Locals     = ($g | Measure-Object -Property Locals -Sum).Sum
             }
         } |
         Sort-Object Package |
-        Format-Table Package, Files, Types, TypesDoc, Methods, MethodsDoc, Fields, FieldsDoc -AutoSize |
+        Format-Table Package, Files, Types, TypesDoc, Methods, MethodsDoc, Fields, FieldsDoc, Locals -AutoSize |
         Out-String -Width 200 |
         Write-Host
 }
@@ -168,6 +181,7 @@ Write-Host ("  files              : {0}" -f $fileStats.Count)
 Write-Host ("  type declarations  : {0,4} ({1} documented)" -f $types, $typeDocs)
 Write-Host ("  methods            : {0,4} ({1} documented) {2}" -f $methods, $methodsDoc, (Format-Pct $methodsDoc $methods))
 Write-Host ("  fields             : {0,4} ({1} documented) {2}" -f $fields, $fieldsDoc, (Format-Pct $fieldsDoc $fields))
+Write-Host ("  locals/params      : {0,4} (не документируются по соглашению §3)" -f $locals)
 if ($methods -gt 0) {
     Write-Host ("  method coverage    : {0}" -f (Format-Pct $methodsDoc $methods))
 }

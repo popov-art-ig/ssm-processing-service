@@ -124,6 +124,7 @@ public class TransitionConfig extends BaseEntity {
     @lombok.Builder.Default
     private boolean active = true;
 
+    /** Время создания строки перехода; техническое поле аудита, кодом не читается. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

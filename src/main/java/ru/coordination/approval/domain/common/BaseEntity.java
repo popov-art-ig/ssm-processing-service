@@ -26,6 +26,11 @@ import lombok.experimental.SuperBuilder;
 @lombok.NoArgsConstructor
 public abstract class BaseEntity {
 
+    /**
+     * Первичный ключ. Генерируется приложением до {@code save()} (см. описание класса), поэтому
+     * {@code id != null} — не признак сохранённой сущности; {@link #equals} опирается на это поле
+     * как на стабильный идентификатор.
+     */
     @Id
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;

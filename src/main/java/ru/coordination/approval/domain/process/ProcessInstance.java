@@ -77,6 +77,12 @@ public class ProcessInstance extends BaseEntity {
     @Column(name = "template_ref", nullable = false)
     private UUID templateRef;
 
+    /**
+     * Тип процесса — {@code STANDARD} или {@code UNIFIED}. Входит в ключ поиска карты переходов
+     * вместе с {@code configVersion}: {@code StateMachineConfig} ищется по паре
+     * ({@code entityType}, {@code processType}), поэтому тип фиксируется при создании процесса и
+     * дальше не меняется.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "process_type", length = 50, nullable = false)
     private ProcessType processType;

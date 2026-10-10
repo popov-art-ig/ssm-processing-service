@@ -16,6 +16,11 @@ import org.springframework.dao.InvalidDataAccessApiUsageException;
  */
 final class ExceptionCauses {
 
+    /**
+     * Предел обхода цепочки {@code getCause()}: защита от зацикливания, если исключения
+     * ссылаются друг на друга. Глубже этого уровня причина не ищется — метод вернёт {@code null},
+     * и {@link GlobalExceptionHandler} отдаст {@code 500} вместо {@code 400}.
+     */
     private static final int MAX_DEPTH = 10;
 
     private ExceptionCauses() {

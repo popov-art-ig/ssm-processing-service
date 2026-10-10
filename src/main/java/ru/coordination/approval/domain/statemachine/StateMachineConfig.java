@@ -87,9 +87,11 @@ public class StateMachineConfig extends BaseEntity {
     @lombok.Builder.Default
     private Integer activeProcessCount = 0;
 
+    /** Время создания версии карты; техническое поле аудита, кодом не читается. */
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /** Автор создания версии карты; техническое поле аудита, кодом не читается. */
     @Column(name = "created_by", nullable = false)
     private UUID createdBy;
 
@@ -101,6 +103,7 @@ public class StateMachineConfig extends BaseEntity {
     @Column(name = "published_by")
     private UUID publishedBy;
 
+    /** Время последнего изменения версии (в том числе смены статуса жизненного цикла). */
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 

@@ -2,6 +2,12 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '4.0.3'
     id 'io.spring.dependency-management' version '1.1.7'
+    // Нагрузочные тесты (doc/LOAD_TESTING.md): плагин создаёт отдельный source set
+    // src/gatling/java и задачу gatlingRun, которая поднимает генератор нагрузки отдельным
+    // JVM-процессом. Тесты в ./gradlew build по умолчанию не запускаются (проверено
+    // `./gradlew check --dry-run`: задачи gatling* в граф не входят), потому что генератору
+    // нужен уже поднятый сервис.
+    id 'io.gatling.gradle' version '3.16.0'
 }
 
 group = 'ru.coordination'
@@ -42,6 +48,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    // Серверные метрики для нагрузочных прогонов (doc/LOAD_TESTING.md): без регистра
+    // Prometheus через /actuator/prometheus видна только клиентская сторона, а вопрос
+    // «где упёрлись» (пул соединений, томат-потоки, GC) остаётся без ответа.
+    implementation 'io.micrometer:micrometer-registry-prometheus'
     implementation 'org.springframework.boot:spring-boot-starter-amqp'
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
 
@@ -88,6 +98,89 @@ dependencies {
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+// Значения нагрузочного прогона в одном месте.
+//
+// Значения приходят Gradle-свойствами (-Ploadtest.read.usersPerSec=50), а не из окружения машины:
+// прогон должен быть воспроизводим и одинаково запускаться локально, на стенде и в CI. Аргументы
+// замыкания — умолчания для конкретной точки входа: у разгона, у SLO-гейта и у сидера они разные,
+// поэтому полный набор свойств собирается здесь, а не дублируется в каждой задаче (иначе рано или
+// поздно разъедутся имена или значения, и гейт начнёт мерить не то).
+def loadTestProperties = { String mode, String usersPerSec, String durationSeconds, String warmupSeconds,
+                           String seedProcesses, String seedStages ->
+    [
+            // Адрес сервиса под нагрузкой.
+            'loadtest.baseUrl'              : project.findProperty('loadtest.baseUrl') ?: 'http://localhost:8080',
+            // Тип сущности нагрузочных данных. Отдельный от боевых (CONTRACT/…), чтобы шаблон и
+            // процессы прогона не пересекались с прочими данными и легко удалялись.
+            'loadtest.entityType'           : project.findProperty('loadtest.entityType') ?: 'LOADTEST',
+            'loadtest.seed.processes'       : project.findProperty('loadtest.seed.processes') ?: seedProcesses,
+            // Сколько этапов в шаблоне прогона: 10 — чтобы проверять требование §25.2 на процессе
+            // с десятью этапами, а не на укороченном маршруте.
+            'loadtest.seed.stages'          : project.findProperty('loadtest.seed.stages') ?: seedStages,
+            // Файл, в который сидер складывает id созданных процессов; его читают read-сценарии.
+            'loadtest.seed.file'            : new File(project.layout.buildDirectory.get().asFile, 'loadtest/seed.csv').absolutePath,
+            // Профиль «UI-чтение»: ramp — разгон (поиск потолка), constant — полка (сравнение
+            // конфигураций и SLO-гейт).
+            'loadtest.read.mode'            : project.findProperty('loadtest.read.mode') ?: mode,
+            'loadtest.read.usersPerSec'     : project.findProperty('loadtest.read.usersPerSec') ?: usersPerSec,
+            'loadtest.read.durationSeconds' : project.findProperty('loadtest.read.durationSeconds') ?: durationSeconds,
+            'loadtest.read.warmupSeconds'   : project.findProperty('loadtest.read.warmupSeconds') ?: warmupSeconds,
+            // Профиль «жизненный цикл» (create/start/recall) — тяжёлые транзакции, поэтому
+            // интенсивность по умолчанию на порядок ниже read-профиля.
+            'loadtest.write.usersPerSec'    : project.findProperty('loadtest.write.usersPerSec') ?: '2',
+            'loadtest.write.durationSeconds': project.findProperty('loadtest.write.durationSeconds') ?: '120',
+            // Административный профиль (жизненный цикл шаблона): шаблоны создаёт администратор,
+            // а не поток пользователей, поэтому интенсивность ещё ниже.
+            'loadtest.template.usersPerSec' : project.findProperty('loadtest.template.usersPerSec') ?: '1',
+            'loadtest.template.durationSeconds': project.findProperty('loadtest.template.durationSeconds') ?: '30',
+            // SLO-пороги: значения по умолчанию — измеренная база (doc/LOAD_TESTING.md §7.3,
+            // машина 24 CPU, пул 20, набор 30×10). На другой машине базу перемеряют и
+            // переопределяют эти свойства осознанно: иначе гейт ловит разницу железа, а не регрессию.
+            'loadtest.slo.shelfUsersPerSec' : project.findProperty('loadtest.slo.shelfUsersPerSec') ?: '40',
+            'loadtest.slo.failedPercent'    : project.findProperty('loadtest.slo.failedPercent') ?: '0.1',
+            'loadtest.slo.aggregateP95Ms'   : project.findProperty('loadtest.slo.aggregateP95Ms') ?: '150',
+            'loadtest.slo.aggregateP99Ms'   : project.findProperty('loadtest.slo.aggregateP99Ms') ?: '500',
+            'loadtest.slo.globalP95Ms'      : project.findProperty('loadtest.slo.globalP95Ms') ?: '300',
+            'loadtest.slo.globalP99Ms'      : project.findProperty('loadtest.slo.globalP99Ms') ?: '800',
+    ]
+}
+
+gatling {
+    // Генератор — отдельный процесс (по умолчанию плагин форкает JVM): heap поднят, потому что
+    // в отчёт попадают все сессии прогона, а не только агрегаты.
+    jvmArgs = ['-server', '-Xms1G', '-Xmx2G', '-XX:+HeapDumpOnOutOfMemoryError',
+               '-XX:MaxInlineLevel=20', '-XX:MaxTrivialSize=12',
+               '--add-opens=java.base/java.lang=ALL-UNNAMED',
+               '--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED']
+    // Ручные прогоны через gatlingRun: разгон 1→20 польз./с на быстром наборе 200×3.
+    systemProperties = loadTestProperties('ramp', '20', '120', '10', '200', '3')
+}
+
+// Нагрузочные задачи: сидирование данных и SLO-гейт.
+//
+// loadTest — регрессионный performance-гейт: сначала создаёт набор, на котором зафиксирован SLO
+// (30 процессов × 10 этапов — менять его нельзя, иначе пороги перестанут быть сопоставимыми),
+// затем гоняет SLO-полку 40 польз./с и падает, если assertions сценария нарушены. В `build` и
+// `check` задачи не входят: им нужен поднятый сервис, а в CI — ещё и Docker.
+//
+// Проверка в CI: .github/workflows/performance.yml, шаг `./gradlew loadTest`.
+tasks.register('loadSeed', io.gatling.gradle.GatlingRunTask) {
+    group = 'verification'
+    description = 'Создаёт нагрузочные данные performance-гейта (шаблон и процессы LOADTEST).'
+    nonInteractive = true
+    simulationClassName = 'ru.coordination.approval.loadtest.SeedSimulation'
+    systemProperties = loadTestProperties('ramp', '20', '120', '10', '30', '10')
+}
+
+tasks.register('loadTest', io.gatling.gradle.GatlingRunTask) {
+    group = 'verification'
+    description = 'SLO-гейт: полка 40 польз./с (≈155 запросов/с) на пуле 20; падает при нарушении p95/p99.'
+    dependsOn tasks.named('loadSeed')
+    nonInteractive = true
+    simulationClassName = 'ru.coordination.approval.loadtest.UiReadSimulation'
+    systemProperties = loadTestProperties('constant', '40', '60', '5', '30', '10')
 }
 
 // Обязательная компиляция тестового кода.

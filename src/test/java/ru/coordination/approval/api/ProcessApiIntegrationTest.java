@@ -183,6 +183,73 @@ class ProcessApiIntegrationTest {
     }
 
     /**
+     * {@code view=summary} — краткое представление списка: в ответе есть {@code currentStageName},
+     * но нет этапов и участников.
+     *
+     * <p>Ответ читается строкой, а не как {@code Page<ProcessSummaryDto>}: для десериализации
+     * {@code Page} тесту понадобился бы модуль Spring Data в ObjectMapper, а проверяем мы форму
+     * JSON — то есть именно то, что видит клиент.
+     */
+    @Test
+    void listProcesses_summaryView_returnsShortCards() {
+        UUID initiatorId = UUID.randomUUID();
+        UUID processId = createProcessForList(initiatorId);
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/api/v1/processes?view=summary&initiatorId=" + initiatorId, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody())
+                .contains(processId.toString())
+                .contains("currentStageName")
+                .doesNotContain("\"stages\"");
+    }
+
+    /** Без параметра {@code view} список по-прежнему отдаёт полные процессы с этапами. */
+    @Test
+    void listProcesses_defaultView_returnsFullProcesses() {
+        UUID initiatorId = UUID.randomUUID();
+        createProcessForList(initiatorId);
+
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/api/v1/processes?initiatorId=" + initiatorId, String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"stages\"");
+    }
+
+    @Test
+    void listProcesses_unknownView_returns400() {
+        ResponseEntity<String> response = restTemplate.getForEntity(
+                "/api/v1/processes?view=detailed", String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).contains("BAD_REQUEST");
+    }
+
+    /**
+     * Процесс в статусе {@code Draft} для проверок списка: маршрут уже сгенерирован, поэтому у
+     * процесса есть этапы (в кратком представлении — имя текущего этапа, у черновика {@code null}).
+     */
+    private UUID createProcessForList(UUID initiatorId) {
+        createAndPublishTemplate(UUID.randomUUID(), UUID.randomUUID());
+
+        CreateProcessRequest request = new CreateProcessRequest(
+                "CONTRACT",
+                null,
+                UUID.randomUUID(),
+                java.util.Map.of("amount", 1500000),
+                initiatorId);
+
+        ResponseEntity<ProcessDto> response = restTemplate.postForEntity(
+                "/api/v1/processes", request, ProcessDto.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(response.getBody()).isNotNull();
+        return response.getBody().id();
+    }
+
+    /**
      * Шаблон с одним обязательным этапом и одним слотом-участником, привязанным к конкретному
      * пользователю ({@code userId}, без {@code acceptableRoles}), — так
      * {@code RouteGenerationService} создаёт ровно одного участника.

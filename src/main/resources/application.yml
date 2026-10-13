@@ -20,6 +20,12 @@ spring:
         format_sql: true
         jdbc:
           time_zone: UTC
+        # Пакетная подгрузка ленивых коллекций и прокси — лекарство от N+1 на уровне маппинга.
+        # Без неё агрегат /approval-view/entities делал отдельный запрос на каждую итерацию этапа
+        # и на каждого участника (60 запросов на процесс с 10 этапами), а список процессов —
+        # 622 запроса на страницу из 20 строк. С пакетом те же обращения идут запросами
+        # «... where id in (?, ?, ...)» по 50 идентификаторов (замеры — doc/LOAD_TESTING.md §5).
+        default_batch_fetch_size: 50
 
   flyway:
     enabled: true
@@ -40,10 +46,20 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        # metrics/prometheus — для нагрузочных прогонов (doc/LOAD_TESTING.md): без них видна
+        # только клиентская сторона, а пул соединений, томат-потоки и GC остаются «чёрным ящиком».
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: when-authorized
+  metrics:
+    distribution:
+      # Гистограммы по HTTP-запросам: из них Prometheus считает p95/p99 по каждому эндпоинту,
+      # а не только среднее, которое на нагрузке врёт.
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.95,0.99
 
 logging:
   level:
@@ -57,6 +73,29 @@ spring:
       on-profile: local
   jpa:
     show-sql: true
+
+---
+# Профиль "perf" — только для нагрузочных и диагностических прогонов (doc/LOAD_TESTING.md).
+# Статистика Hibernate отвечает на вопрос «сколько SQL-запросов ушло на один HTTP-вызов»
+# (именно так ловится N+1 в агрегированных представлениях), но пишет строку в лог на каждую
+# сессию, поэтому в обычных профилях она выключена.
+spring:
+  config:
+    activate:
+      on-profile: perf
+  jpa:
+    properties:
+      hibernate:
+        generate_statistics: true
+logging:
+  level:
+    # Сводка по сессии Hibernate («N ns executing M JDBC statements») в Hibernate 7.4 печатается
+    # категорией org.hibernate.session.metrics (сообщение HHH000401) и только на уровне DEBUG —
+    # проверено на стенде: при `hibernate.generate_statistics=true` это единственная настройка,
+    # после которой строки появились. Прежние варианты (org.hibernate.stat, ...SessionMetricsLogger)
+    # молчат: первая категория отвечает за статистику по отдельным запросам (HHH000117), вторая
+    # в 7.4 не используется.
+    org.hibernate.session.metrics: DEBUG
 
 ---
 # Профиль "test" описан в src/test/resources/application-test.yml: он принадлежит тестовому

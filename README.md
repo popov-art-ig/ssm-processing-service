@@ -230,6 +230,26 @@ docker run -d --name ssm-processing-service --network <project>_default \
 `./gradlew build` проверен и зелёный (298 тестов, 51 класс, Docker обязателен для
 интеграционных тестов на Testcontainers).
 
+**Нагрузочные тесты.** Gatling 3.16 (Java DSL) в source set `src/gatling/java`, запуск отдельной
+задачей — в `./gradlew build` не входит, потому что генератору нужен уже поднятый сервис:
+
+```bash
+./gradlew gatlingRun --simulation=ru.coordination.approval.loadtest.SeedSimulation   # данные
+./gradlew gatlingRun --simulation=ru.coordination.approval.loadtest.UiReadSimulation # профиль чтения (разгон)
+./gradlew gatlingRun --simulation=ru.coordination.approval.loadtest.LifecycleSimulation
+./gradlew gatlingRun --simulation=ru.coordination.approval.loadtest.TemplateLifecycleSimulation
+```
+
+SLO проверяется одной задачей: она создаёт набор, на котором зафиксированы пороги, и падает, если
+p95/p99 нарушены. Эта же задача используется ночным гейтом в CI
+(`.github/workflows/performance.yml`):
+
+```bash
+./gradlew loadTest               # сид + SLO-полка 40 польз./с против http://localhost:8080
+./gradlew loadTest -x loadSeed   # повторный прогон по уже созданным данным
+```
+
+Постановка, профили нагрузки, SLO, разбор результата и очистка данных — `doc/LOAD_TESTING.md`.
 **Компиляция тестов обязательна.** Задача `verifyTestCompilation` выделяет
 `:compileTestJava` в отдельный адресуемый шаг — его нужно запускать в CI первым. Причина:
 ранее в репозиторий попали тестовые классы, которые не компилировались (ссылались на

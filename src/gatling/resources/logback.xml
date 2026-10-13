@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Логирование нагрузочного генератора (source set gatling, подхватывается плагином Gatling).
+
+  Зачем свой файл: на прогоне интересен итоговый отчёт и метрики, а не поток служебных сообщений
+  Netty и Gatling — в консоли за десятки тысяч запросов иначе не видно ни ошибок, ни предупреждений.
+  Уровень WARN для io.gatling при этом оставляет видимыми предупреждения о неверно заданных
+  параметрах прогона.
+-->
+<configuration>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} %-5level %logger{24} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="io.gatling" level="WARN"/>
+    <logger name="io.netty" level="WARN"/>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

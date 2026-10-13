@@ -1,5 +1,6 @@
 package ru.coordination.approval.domain.process;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,6 +21,18 @@ public interface DecisionRepository extends JpaRepository<Decision, UUID> {
 
     /** Решения по списку участников — пакетная загрузка для агрегированных представлений. */
     List<Decision> findByParticipantIdIn(List<UUID> participantIds);
+
+    /**
+     * Идентификаторы участников, у которых уже есть решение, — одним запросом на весь набор.
+     *
+     * <p>Проекция, а не загрузка сущностей: для флага {@code ParticipantDto.hasDecision} нужны
+     * только идентификаторы, и обращение {@code d.participant.id} не поднимает ни решение, ни
+     * участника. Существует потому, что прежний способ — спрашивать по одному участнику за раз —
+     * давал N+1: агрегат на процессе с 10 этапами делал 30 лишних запросов, а страница списка
+     * множила их на число строк (doc/LOAD_TESTING.md §5).
+     */
+    @Query("select d.participant.id from Decision d where d.participant.id in :participantIds")
+    List<UUID> findParticipantIdsWithDecision(@Param("participantIds") Collection<UUID> participantIds);
 
     /** Все решения процесса: подъём по цепочке участник → итерация → этап; для представлений процесса. */
     @Query("SELECT d FROM Decision d JOIN d.participant p JOIN p.stageIteration i JOIN i.stage s WHERE s.process.id = :processId")

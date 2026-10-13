@@ -1,0 +1,87 @@
+name: Performance gate
+
+# Регрессионный гейт производительности (этап 3, doc/LOAD_TESTING.md §8).
+#
+# Почему по расписанию, а не на каждый push: прогон поднимает Docker-стек, сидирует базу и
+# грузит сервис минуты две; на общих раннерах такая проверка чувствительна к соседям и в PR
+# превратилась бы в источник ложных падений. Ночной прогон ловит деградацию за сутки, а
+# workflow_dispatch позволяет запустить гейт вручную на ветке перед релизом.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  slo:
+    name: SLO-полка (UI-чтение)
+    runs-on: ubuntu-latest
+    # Прогон целиком: сборка jar, подъём стека, сид, полка. Таймаут защищает от зависшего стека.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 21 (temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Настроить Gradle (кеш зависимостей)
+        uses: gradle/actions/setup-gradle@v4
+
+      # Dockerfile упаковывает уже собранный jar (сборка внутри образа требует доступа к Maven
+      # Central, которого в контуре может не быть), поэтому jar собирается до docker compose.
+      - name: Собрать jar
+        run: ./gradlew bootJar --no-daemon --no-watch-fs
+
+      - name: Поднять стек (Postgres + RabbitMQ + приложение)
+        run: docker compose up -d --build
+
+      - name: Дождаться готовности сервиса
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sf http://localhost:8080/actuator/health > /dev/null; then
+              echo "Сервис готов (попытка ${attempt})"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Сервис не поднялся за 5 минут"
+          docker compose logs app | tail -n 100
+          exit 1
+
+      # Одна команда делает всё: loadSeed создаёт набор, на котором зафиксирован SLO
+      # (30 процессов × 10 этапов), loadTest гоняет полку 40 польз./с и падает, если нарушены
+      # пороги p95/p99 из UiReadSimulation.
+      #
+      # Пороги по умолчанию измерены на машине 24 CPU (doc/LOAD_TESTING.md §7.3). Раннер
+      # GitHub слабее, поэтому ПЕРВЫЙ прогон здесь — это калибровка: посмотрите артефакт
+      # gatling-report, зафиксируйте новую базу для этого класса машин и передайте её явно,
+      # например:
+      #     ./gradlew loadTest -Ploadtest.slo.aggregateP95Ms=... -Ploadtest.slo.globalP95Ms=...
+      # Ослаблять порог «потому что в CI не проходит» нельзя: сначала замер, потом порог.
+      - name: SLO-гейт (сид + полка 40 польз./с)
+        run: ./gradlew loadTest --no-daemon --no-watch-fs
+
+      - name: Отчёт Gatling
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gatling-report
+          path: build/reports/gatling/**
+          if-no-files-found: warn
+
+      - name: Логи приложения (при падении)
+        if: failure()
+        run: docker compose logs app | tail -n 200
+
+      - name: Остановить стек и удалить данные
+        if: always()
+        # -v удаляет том Postgres: следующий прогон начнётся с чистой базы, а значит и с того же
+        # набора данных, что и калибровочный (иначе процессы копились бы и «список процессов»
+        # дорожал от прогона к прогону).
+        run: docker compose down -v

@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import ru.coordination.approval.api.dto.ErrorResponse;
 
 /**
@@ -19,6 +20,8 @@ import ru.coordination.approval.api.dto.ErrorResponse;
  *       {@code VALIDATION_ERROR} со списком полей;</li>
  *   <li>{@link EntityNotFoundException} → {@code 404} {@code NOT_FOUND};</li>
  *   <li>{@link IllegalArgumentException} → {@code 400} {@code BAD_REQUEST};</li>
+ *   <li>{@link MethodArgumentTypeMismatchException} → {@code 400} {@code BAD_REQUEST} (параметр
+ *       запроса не преобразуется к типу: {@code view=unknown}, {@code initiatorId=not-a-uuid});</li>
  *   <li>{@link org.springframework.dao.DataAccessException} → {@code 400} {@code BAD_REQUEST},
  *       если причина — {@code IllegalArgumentException} (см. {@link #handleDataAccess}), иначе
  *       {@code 500} {@code INTERNAL_ERROR};</li>
@@ -63,6 +66,24 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNotFound(EntityNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorResponse("NOT_FOUND", ex.getMessage()));
+    }
+
+    /**
+     * Параметр запроса не удалось преобразовать к нужному типу: {@code view=unknown},
+     * {@code initiatorId=not-a-uuid}, {@code page=abc}.
+     *
+     * <p>Без этой ветки исключение попадало в {@link #handleInternalError} и клиент получал
+     * {@code 500} на свой же неверный запрос. Найдено при добавлении параметра {@code view} у
+     * списка процессов: неизвестное значение enum — это {@code 400}, а не внутренняя ошибка.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        String expected = ex.getRequiredType() == null
+                ? "another type"
+                : ex.getRequiredType().getSimpleName();
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("BAD_REQUEST",
+                        "Invalid value for parameter '%s': expected %s".formatted(ex.getName(), expected)));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

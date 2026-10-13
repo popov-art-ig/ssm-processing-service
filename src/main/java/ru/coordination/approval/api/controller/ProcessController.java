@@ -189,9 +189,21 @@ public class ProcessController {
     }
 
     /**
-     * Постраничный список процессов через {@link ProcessViewService#list}: фильтры уходят в
+     * Постраничный список процессов через {@link ProcessViewService}: фильтры уходят в
      * {@code Specification}, сортировка фиксирована — {@code createdAt DESC}, размер страницы
      * зажимается сверху.
+     *
+     * <p><b>Представление задаётся параметром {@code view}</b>:
+     * <ul>
+     *   <li>{@code full} (по умолчанию) — {@link ProcessDto} с этапами, итерациями и участниками:
+     *       прежнее поведение сохраняется для клиентов, которым список нужен целиком;</li>
+     *   <li>{@code summary} — {@link ProcessSummaryDto}: без этапов и участников, но с именем
+     *       текущего этапа. Такой ответ стоит 1–2 запроса к БД на страницу вместо десятков
+     *       ({@code doc/LOAD_TESTING.md} §5.3), и именно краткое представление описывает
+     *       контракт §12.2.</li>
+     * </ul>
+     * Неизвестное значение {@code view} — это {@code 400} ({@code BAD_REQUEST}), а не молчаливый
+     * откат к {@code full}: опечатка в параметре не должна выглядеть как другой объём ответа.
      *
      * <p>Отвечает {@code 200}. Пустые строковые фильтры трактуются как отсутствующие, поэтому
      * {@code ?status=} не сужает выборку. Ограничение размера страницы живёт в
@@ -200,23 +212,38 @@ public class ProcessController {
      */
     @GetMapping
     @Operation(summary = "Получить список процессов",
-               description = "Возвращает постраничный список процессов с возможностью фильтрации")
+               description = "Возвращает постраничный список процессов с возможностью фильтрации. "
+                       + "view=full (по умолчанию) — процессы с этапами и участниками; "
+                       + "view=summary — краткие карточки без этапов и участников.")
     @ApiResponses(value = {
         @ApiResponse(responseCode = "200", description = "Список процессов",
-                     content = @Content(schema = @Schema(implementation = Page.class)))
+                     content = @Content(schema = @Schema(implementation = Page.class))),
+        @ApiResponse(responseCode = "400", description = "Неизвестное значение view",
+                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    public ResponseEntity<Page<ProcessDto>> listProcesses(
+    public ResponseEntity<Page<?>> listProcesses(
             @Parameter(description = "Фильтр по статусу")
             @RequestParam(required = false) String status,
             @Parameter(description = "Фильтр по инициатору")
             @RequestParam(required = false) UUID initiatorId,
             @Parameter(description = "Фильтр по типу сущности")
             @RequestParam(required = false) String entityType,
+            @Parameter(description = "Представление: full (по умолчанию) или summary")
+            @RequestParam(defaultValue = "full") String view,
             @Parameter(description = "Номер страницы (начиная с 0)")
             @RequestParam(defaultValue = "0") int page,
             @Parameter(description = "Размер страницы")
             @RequestParam(defaultValue = "20") int size) {
 
-        return ResponseEntity.ok(processViewService.list(status, initiatorId, entityType, page, size));
+        // Разбор значения без учёта регистра; неизвестное значение — IllegalArgumentException,
+        // которую GlobalExceptionHandler отдаёт как 400 BAD_REQUEST.
+        ProcessListView representation = ProcessListView.parse(view);
+
+        // Обе ветки возвращают Page, отличаются только типом элемента: общий Page<?> сохраняет один
+        // эндпоинт вместо второго метода с почти теми же аннотациями.
+        Page<?> result = representation == ProcessListView.SUMMARY
+                ? processViewService.listSummaries(status, initiatorId, entityType, page, size)
+                : processViewService.list(status, initiatorId, entityType, page, size);
+        return ResponseEntity.ok(result);
     }
 }

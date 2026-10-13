@@ -81,20 +81,23 @@ public class ApprovalViewService {
         List<Comment> comments = commentRepository.findByProcessId(process.getId());
 
         // 3. Build DTOs
-        ProcessDto processDto = processMapper.toDto(process);
+        // Набор участников с решениями уже посчитан пакетным запросом выше, поэтому маппер
+        // получает его готовым: иначе каждый участник стоил бы отдельного запроса (N+1).
+        Set<UUID> decisionParticipantIds = decisionMap.keySet();
+        ProcessDto processDto = processMapper.toDto(process, decisionParticipantIds);
 
         List<StageWithDecisionsDto> stagesWithDecisions = process.getStages().stream()
                 .map(stage -> {
                     List<ParticipantWithDecisionDto> participantsWithDecisions = stage.getIterations().stream()
                             .flatMap(iter -> iter.getParticipants().stream())
                             .map(p -> new ParticipantWithDecisionDto(
-                                    processMapper.toParticipantDto(p),
+                                    processMapper.toParticipantDto(p, decisionParticipantIds),
                                     decisionMap.containsKey(p.getId()) ? decisionMapper.toDto(decisionMap.get(p.getId())) : null
                             ))
                             .toList();
 
                     return new StageWithDecisionsDto(
-                            processMapper.toStageDto(stage),
+                            processMapper.toStageDto(stage, decisionParticipantIds),
                             participantsWithDecisions
                     );
                 })
@@ -173,26 +176,8 @@ public class ApprovalViewService {
                     userId, userId, pageable);
         }
 
-        List<ProcessSummaryDto> summaries = processes.getContent().stream()
-                .map(p -> {
-                    String currentStageName = p.getStages().stream()
-                            .filter(s -> "Active".equals(s.getStatus()))
-                            .findFirst()
-                            .map(StageInstance::getName)
-                            .orElse(null);
-
-                    return new ProcessSummaryDto(
-                            p.getId(),
-                            p.getEntityType(),
-                            p.getEntityId(),
-                            p.getStatus(),
-                            p.getCreatedAt(),
-                            null, // TODO: Calculate dueDate
-                            currentStageName
-                    );
-                })
-                .toList();
-
-        return new PageImpl<>(summaries, pageable, processes.getTotalElements());
+        // Маппинг краткой карточки общий с view=summary у списка процессов: две реализации одного
+        // DTO разошлись бы при первой же правке (например, когда появится расчёт dueDate).
+        return processes.map(processMapper::toSummaryDto);
     }
 }

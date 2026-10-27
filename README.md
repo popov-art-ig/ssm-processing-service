@@ -324,3 +324,6 @@ curl -X POST http://localhost:8080/api/v1/admin/state-machines/{configId}/valida
 Соглашение о комментариях в коде — `doc/CODE_COMMENTS.md`; отчёт о покрытии и о дефектах,
 зафиксированных в комментариях, — `doc/JAVADOC_COVERAGE.md`. Найденные расхождения кода со
 спецификацией разложены в тикеты — `doc/tickets/DEFECTS-INDEX.md` (DEFECT-01…20).
+
+Сводная матрица всех статусов и переходов (целевая карта и фактическая реализация) —
+`doc/arch/13_status_transition_matrix.md`.

@@ -408,4 +408,5 @@ autoArchiveScheduledAt наступил
 | `06_event_contract.md` | События, которые публикуют переходы |
 | `07_api_contract.md` | REST-команды, инициирующие переходы |
 | `08_db_schema.md` | `status_registry`, `state_machine_config`, `transition_config` |
+| `14_scenario_transition_matrix.md` | Та же карта переходов в сценарном виде: от действия пользователя к сущностям и переходам |
 | `DEFECTS-INDEX.md` | Тикеты по расхождениям, отмеченным в §6 |

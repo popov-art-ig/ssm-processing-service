@@ -326,4 +326,5 @@ curl -X POST http://localhost:8080/api/v1/admin/state-machines/{configId}/valida
 спецификацией разложены в тикеты — `doc/tickets/DEFECTS-INDEX.md` (DEFECT-01…20).
 
 Сводная матрица всех статусов и переходов (целевая карта и фактическая реализация) —
-`doc/arch/13_status_transition_matrix.md`.
+`doc/arch/13_status_transition_matrix.md`. Сценарная версия той же карты (от действия пользователя
+к сущностям и переходам) — `doc/arch/14_scenario_transition_matrix.md`.

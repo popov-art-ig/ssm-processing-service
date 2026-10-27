@@ -326,7 +326,7 @@ autoArchiveScheduledAt наступил
 
 ### 6.7. UNIFIED, итерации, доп. согласующие, финальное решение
 
-Для `PROCESS / UNIFIED`, `STAGE / UNIFIED`, `STAGE_ITERATION`, `ADDITIONAL_APPROVER`, `FINAL_DECISION` в репозитории нет ни `state_machine_config`, ни `status_registry`-записей (кроме упомянутых точечно), ни переходов. Эти машины существуют только в архитектуре. Для UNIFIED нет даже статусов `AwaitingFinalDecision` и `Rejected` для `PROCESS`, а для `FINAL_DECISION` — статусов `Pending`/`Decided`.
+Для `PROCESS / UNIFIED` нет отдельной карты (в БД есть только `PROCESS / STANDARD`) и нет статусов `AwaitingFinalDecision` и `Rejected` для `PROCESS`. Для `STAGE / UNIFIED`, `STAGE_ITERATION`, `ADDITIONAL_APPROVER`, `FINAL_DECISION` нет ни `state_machine_config`, ни `status_registry`-записей, ни переходов; для `FINAL_DECISION` отсутствуют даже статусы `Pending`/`Decided`. Эти машины существуют только в архитектуре.
 
 ### 6.8. Архивация и восстановление
 

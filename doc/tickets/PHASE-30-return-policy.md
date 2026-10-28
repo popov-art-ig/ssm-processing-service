@@ -149,33 +149,23 @@ create unique index ux_return_rule_unconditional
     where when_condition is null;
 
 create table template_return_rule_target (
-    id          uuid primary key,
-    rule_id     uuid not null references template_return_rule(id) on delete cascade,
-    selector    varchar(20) not null,           -- STAGE | SELF | FIRST
-    stage_key   varchar(100) null,              -- только для STAGE
-    constraint ck_return_target_selector check (selector in ('STAGE','SELF','FIRST')),
-    constraint ck_return_target_stage check (
-        (selector = 'STAGE' and stage_key is not null) or
-        (selector <> 'STAGE' and stage_key is null)
-    )
+    id                uuid primary key,
+    rule_id           uuid not null references template_return_rule(id) on delete cascade,
+    target_stage_key  varchar(100) not null,   -- конкретный этап шаблона
+    unique (rule_id, target_stage_key)
 );
-
--- уникальность цели: coalesce, потому что stage_key = null у SELF/FIRST
-create unique index ux_return_target
-    on template_return_rule_target(rule_id, selector, coalesce(stage_key, ''));
 
 alter table process_instance add column return_policy jsonb not null default '[]';
 ```
 
-Порядок цели в правиле не хранится: `SELF` и `FIRST` резолвятся компилятором для конкретного
-этапа (`SELF` — сам этап, `FIRST` — минимальный `orderIdx`), `STAGE` — по `stage_key`. Это
-устраняет проблему «у правила по умолчанию с `SELF` нет одного `orderIdx`»: у каждого этапа он
-свой.
+Порядок цели не хранится: `target_stage_key` резолвится компилятором в конкретный этап шаблона.
+Селекторов `SELF`/`FIRST` нет: «на себя» — это ключ самого этапа, «на первый» — ключ первого
+этапа; для правила «каждый этап — на себя» создаётся правило на этап.
 
 > **Почему `template_id` и `from_stage_key` — не две привязки.** `template_id` — владелец политики
 > (конкретная версия шаблона); он нужен для правил «для всех этапов» (`from_stage_key = null`) и
-> потому, что ключ этапа уникален только внутри шаблона. `from_stage_key` — селектор внутри этой
-> политики: конкретный этап или все. Полный адрес этапа — пара `(template_id, key)`.
+> потому, что ключ этапа уникален только внутри шаблона. `from_stage_key` — область действия
+> внутри этой политики: конкретный этап или все. Полный адрес этапа — пара `(template_id, key)`.
 > Правило не вешается на строку `stage_template`: иначе «все этапы → входной контроль» пришлось
 > бы дублировать N раз и добавлять строку при каждом новом этапе.
 
@@ -187,7 +177,7 @@ alter table process_instance add column return_policy jsonb not null default '[]
 3.1. `ReturnReason` — не enum, а код из `return_reason_registry`; в коде — константы
 `ReturnReasons.REWORK`, `ReturnReasons.RECALL` для известных сценариев.
 
-3.2. `ReturnMode` (`FORCED`, `CHOICE`, `DENY`), `ReturnTargetSelector` (`STAGE`, `SELF`, `FIRST`).
+3.2. `ReturnMode` (`FORCED`, `CHOICE`, `DENY`).
 
 3.3. `Template` получает `@OneToMany` `returnRules` (каскадное сохранение, orphanRemoval).
 `ReturnRule` и `ReturnRuleTarget` — JPA-сущности.
@@ -211,8 +201,7 @@ alter table process_instance add column return_policy jsonb not null default '[]
    - если ни одно правило не применимо — ошибка компиляции с указанием `stage key` и `reason`.
 2. Проверить режим и количество целей: `FORCED` — ровно 1, `CHOICE` — ≥ 1, `DENY` — 0; дубли
    целей запрещены.
-3. Резолв селекторов: `SELF` → сам этап; `FIRST` → этап с минимальным `orderIdx`; `STAGE` → этап
-   по `stage_key`.
+3. Резолв целей: `target_stage_key` → конкретный этап шаблона; ключ обязан существовать.
 4. Вернуть эффективную политику; её же использовать для предпросмотра в API шаблона.
 
 Ошибки компиляции — `IllegalArgumentException` с человекочитаемым текстом (как в
@@ -376,12 +365,12 @@ ReturnOptions resolve(ProcessInstance process, String reasonCode, UUID fromStage
   ],
   "returnRules": [
     {"reason": "REWORK", "from": null, "mode": "FORCED",
-     "targets": [{"selector": "STAGE", "stageKey": "input_control"}]},
+     "targets": [{"stageKey": "input_control"}]},
     {"reason": "REWORK", "from": "signing", "mode": "CHOICE",
-     "targets": [{"selector": "STAGE", "stageKey": "signing"},
-                 {"selector": "STAGE", "stageKey": "input_control"}]},
+     "targets": [{"stageKey": "signing"},
+                 {"stageKey": "input_control"}]},
     {"reason": "RECALL", "from": null, "mode": "FORCED",
-     "targets": [{"selector": "STAGE", "stageKey": "input_control"}]}
+     "targets": [{"stageKey": "input_control"}]}
   ]
 }
 ```
@@ -427,9 +416,10 @@ deprecated alias и конвертировать в правило `(REWORK, fro
 отдавать. Удалить alias после миграции клиентов.
 
 Если `returnRules` не передан вовсе (старый клиент), сервис создаёт **видимые** правила по
-умолчанию, сохраняя прежнее поведение: `(REWORK, null, FORCED, SELF)` и
-`(RECALL, null, DENY)`. Они сохраняются как обычные правила, отдаются в `GET /templates/{id}` и
-могут быть изменены администратором; неявных правил в рантайме нет.
+умолчанию, сохраняя прежнее поведение: для каждого этапа `(REWORK, from=этап, FORCED,
+targets=[этот этап])` и одно `(RECALL, null, DENY)`. Они сохраняются как обычные правила,
+отдаются в `GET /templates/{id}` и могут быть изменены администратором; неявных правил в
+рантайме нет.
 
 ### 10. Валидация при публикации
 
@@ -458,13 +448,13 @@ V26:
 2. создать таблицы из §2, засеять причины;
 3. для каждого этапа с непустым `allowed_return_stages` создать правило
    `(REWORK, from=этот этап, CHOICE, targets=этапы с указанными orderIdx)`;
-4. для каждого шаблона создать правило по умолчанию `(REWORK, null, FORCED, SELF)`, чтобы этапы
-   без явного правила сохранили старое поведение «только текущий этап»;
+4. для каждого этапа без явного правила создать `(REWORK, from=этап, FORCED, targets=[этот
+   этап])`, чтобы сохранить старое поведение «только текущий этап»;
 5. для каждого шаблона создать `(RECALL, null, DENY)` — старое поведение «возобновления после
    отзыва нет»;
 6. для существующих процессов собрать `return_policy` из
    `stage_instance.allowed_return_stages` (для каждого этапа: непустой список → `CHOICE` с
-   целями, пустой/null → `FORCED SELF`; `RECALL` → `DENY`);
+   целями, пустой/null → `FORCED` на сам этап; `RECALL` → `DENY`);
 7. удалить `stage_template.allowed_return_stages` и `stage_instance.allowed_return_stages`.
 
 V27: переходы, guards, actions:
@@ -538,8 +528,9 @@ V27: переходы, guards, actions:
 
 **Unit:**
 
-- `ReturnPolicyCompilerTest` — приоритет `EXPLICIT` над `DEFAULT`; `SELF`/`FIRST`; запрет
-  «вперёд»; покрытие; режимы и количество целей; `REWORK`/`UNIFIED`.
+- `ReturnPolicyCompilerTest` — приоритет `EXPLICIT` над `DEFAULT`; конкретные цели (включая
+  «на себя» по ключу самого этапа); запрет «вперёд»; покрытие; режимы и количество целей;
+  `REWORK`/`UNIFIED`.
 - `ReturnPolicyServiceTest` — выбор источника (`OnRework`, `Active`, последний, первый);
   `FORCED`/`CHOICE`/`DENY`; неизвестная цель; снимок без записи.
 - `ValidateTemplateStructureActionTest` — новые ошибки публикации.

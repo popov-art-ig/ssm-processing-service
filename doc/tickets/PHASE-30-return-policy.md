@@ -222,13 +222,13 @@ alter table process_instance add column return_policy jsonb not null default '[]
     "fromStageId": "11111111-...",
     "mode": "FORCED",
     "targetStageIds": ["22222222-..."],
-    "ruleId": "33333333-...",
-    "source": "EXPLICIT"
+    "ruleId": "33333333-..."
   }
 ]
 ```
 
-Одна запись на пару «этап × причина». `source` (`EXPLICIT`/`DEFAULT`) — для аудита и отладки.
+Одна запись на пару «этап × причина». `ruleId` — ссылка на правило шаблона для аудита; для
+самого возврата достаточно `mode` и `targetStageIds`.
 Для `DENY` — `targetStageIds: []`.
 
 Снимок неизменяем после старта. Если в будущем появится редактирование маршрута после отзыва,
@@ -528,9 +528,9 @@ V27: переходы, guards, actions:
 
 **Unit:**
 
-- `ReturnPolicyCompilerTest` — приоритет `EXPLICIT` над `DEFAULT`; конкретные цели (включая
-  «на себя» по ключу самого этапа); запрет «вперёд»; покрытие; режимы и количество целей;
-  `REWORK`/`UNIFIED`.
+- `ReturnPolicyCompilerTest` — приоритет правила для конкретного этапа над правилом по
+  умолчанию; конкретные цели (включая «на себя» по ключу самого этапа); запрет «вперёд»;
+  покрытие; режимы и количество целей; `REWORK`/`UNIFIED`.
 - `ReturnPolicyServiceTest` — выбор источника (`OnRework`, `Active`, последний, первый);
   `FORCED`/`CHOICE`/`DENY`; неизвестная цель; снимок без записи.
 - `ValidateTemplateStructureActionTest` — новые ошибки публикации.

@@ -218,6 +218,13 @@ AuditEvent, ConfigAuditEvent
 - Без дублей.
 - Работает всегда, независимо от `processIterationEnabled`.
 
+> **Запланировано (ADR-029, 2026-10-28).** Поле `allowedReturnStages` заменяется политикой
+> возврата на уровне шаблона: правила «причина (`REWORK`/`RECALL`) + откуда → режим
+> (`FORCED`/`CHOICE`/`DENY`) + куда», цель адресуется стабильным ключом этапа, а не `orderIdx`.
+> Снимок политики хранится в `ProcessInstance`, поле `StageInstance.allowedReturnStages`
+> удаляется. См. `11_adr.md` §31 и `tickets/PHASE-30-return-policy.md`; описание выше
+> действует до реализации PHASE-30.
+
 ### 6.5 SlotTemplate (унифицированный)
 
 **Назначение.** Позиция участника в шаблоне.

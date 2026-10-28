@@ -114,49 +114,213 @@
 
 ### 2. Схема БД (V26)
 
+Новые объекты и их роль:
+
+| Объект | Роль |
+|---|---|
+| `stage_template.key` | стабильный адрес этапа внутри версии шаблона; на него ссылаются правила |
+| `return_reason_registry` | справочник причин возврата (`REWORK`, `RECALL`, …) |
+| `template_return_rule` | правило: в шаблоне `T`, для причины `R`, откуда `K` (или все), режим `M` |
+| `template_return_rule_target` | цели правила: 1..N конкретных этапов |
+| `process_instance.return_policy` | неизменяемый снимок скомпилированной политики для процесса |
+
+Остальные атрибуты существующих таблиц `stage_template` и `process_instance` не меняются; ниже
+описаны только новые объекты и изменяемые колонки.
+
+#### 2.1 `stage_template.key` — ключ этапа
+
+**Зачем.** Правилам нужен адрес этапа, который не меняется при переименовании, перестановке и
+создании новой версии шаблона. `orderIdx` для этого не годится (сдвигается при вставке этапа),
+`stage_template.id` — тоже (новый UUID в каждой версии). Ключ — это имя этапа внутри шаблона,
+например `input_control`, `legal_review`, `signing`.
+
 ```sql
--- справочник причин: код, подпись, к каким типам процесса применим
+alter table stage_template add column key varchar(100);
+update stage_template set key = 'stage_' || order_idx where key is null;
+alter table stage_template alter column key set not null;
+create unique index ux_stage_template_key on stage_template(template_id, key);
+```
+
+| Атрибут | Тип | Обяз. | Зачем / что означает |
+|---|---|---|---|
+| `key` | `varchar(100)` | да | Уникальное имя этапа в пределах шаблона. Используется в правилах (`from_stage_key`, `target_stage_key`) и в API при создании/обновлении шаблона, когда у этапов ещё нет `id`. Формат `^[a-z][a-z0-9_]{1,99}$`. |
+
+**Ограничения.**
+
+- `unique (template_id, key)` — ключ уникален в шаблоне, но не глобально; поэтому в правилах он
+  всегда рассматривается вместе с `template_id`.
+- В опубликованной версии ключ неизменяем; переименование — только в `Draft` (процессов на нём
+  нет). Смена ключа в опубликованной версии — это новая версия шаблона.
+- Для существующих шаблонов миграция заполняет `key = 'stage_' || order_idx`; если старый клиент
+  не передал ключ, сервис генерирует его так же.
+
+#### 2.2 `return_reason_registry` — справочник причин возврата
+
+**Зачем.** Отделить причину возврата от кода и от конкретной карты переходов: правило ссылается
+на код причины, UI берёт подпись, валидатор — список допустимых типов процесса. Добавление новой
+причины (например, `REVISION`) не требует менять схему таблиц правил, хотя и потребует проводки
+нового перехода в карте.
+
+```sql
 create table return_reason_registry (
-    code                    varchar(50) primary key,
-    display_name            varchar(255) not null,
+    code                     varchar(50) primary key,
+    display_name             varchar(255) not null,
     applicable_process_types varchar(20)[] not null,
-    is_active               boolean not null default true,
-    created_at              timestamp not null,
-    updated_at              timestamp not null
+    is_active                boolean not null default true,
+    created_at               timestamp not null,
+    updated_at               timestamp not null,
+    constraint ck_return_reason_types check (cardinality(applicable_process_types) > 0)
 );
 
 insert into return_reason_registry(code, display_name, applicable_process_types, created_at, updated_at)
 values
     ('REWORK', 'Доработка', '{STANDARD}', now(), now()),
     ('RECALL', 'Отзыв',     '{STANDARD,UNIFIED}', now(), now());
+```
 
+| Атрибут | Тип | Обяз. | Зачем / что означает |
+|---|---|---|---|
+| `code` | `varchar(50)` | да, PK | Стабильный код причины (`REWORK`, `RECALL`). На него ссылаются `template_return_rule.reason_code` и снимок процесса. Не enum, чтобы подпись и применимость были данными, а не релизом. |
+| `display_name` | `varchar(255)` | да | Подпись для UI; меняется без изменения кода и правил. |
+| `applicable_process_types` | `varchar(20)[]` | да | К каким типам процесса причина применима: `REWORK` — только `STANDARD`, `RECALL` — оба. Компилятор и валидатор не дадут использовать `REWORK` в `UNIFIED`. |
+| `is_active` | `boolean` | да, по умолчанию `true` | Мягкое отключение причины: старые правила и снимки остаются валидными, новые правила с неактивной причиной не создаются. |
+| `created_at` | `timestamp` | да | Когда причина заведена; аудит и эксплуатация. |
+| `updated_at` | `timestamp` | да | Когда менялась подпись/применимость; аудит. |
+
+**Ограничения.** PK по `code`; отдельного `id` нет — код и есть естественный ключ. Проверка
+`cardinality(applicable_process_types) > 0` (причины без типа процесса бессмысленны).
+
+#### 2.3 `template_return_rule` — правило возврата
+
+**Зачем.** Одна строка — одно правило: «в шаблоне `T` для причины `R`, начиная с этапа `K` (или
+со всех этапов), вернуть по режиму `M` на цели из дочерней таблицы». Это единица авторства,
+валидации и копирования в новую версию шаблона.
+
+```sql
 create table template_return_rule (
     id              uuid primary key,
-    template_id     uuid not null references template(id),
+    template_id     uuid not null references template(id) on delete cascade,
     reason_code     varchar(50) not null references return_reason_registry(code),
-    from_stage_key  varchar(100) null,          -- null = правило по умолчанию
-    mode            varchar(20) not null,       -- FORCED | CHOICE | DENY
-    when_condition  jsonb null,                 -- зарезервировано, в v1 обязано быть null
+    from_stage_key  varchar(100) null,
+    mode            varchar(20) not null,
+    when_condition  jsonb null,
     priority        integer not null default 0,
     created_at      timestamp not null,
     constraint ck_return_rule_mode check (mode in ('FORCED','CHOICE','DENY')),
     constraint ck_return_rule_deny_reason check (mode <> 'DENY' or reason_code = 'RECALL')
 );
 
--- одно безусловное правило на (шаблон, причина, откуда); условные правила появятся в v1.1
 create unique index ux_return_rule_unconditional
     on template_return_rule(template_id, reason_code, coalesce(from_stage_key, ''))
     where when_condition is null;
 
+create index ix_return_rule_template on template_return_rule(template_id);
+```
+
+| Атрибут | Тип | Обяз. | Зачем / что означает |
+|---|---|---|---|
+| `id` | `uuid` | да, PK | Технический идентификатор правила. Нужен для FK целей и для `ruleId` в снимке (аудит: какое правило сработало). |
+| `template_id` | `uuid` | да, FK → `template(id)` | Владелец политики — конкретная версия шаблона. Нужен и для правил «для всех этапов» (`from_stage_key = null`), и потому, что ключ этапа уникален только внутри шаблона. При удалении черновика шаблона правила удаляются каскадно. |
+| `reason_code` | `varchar(50)` | да, FK → `return_reason_registry.code` | Какая причина: доработка или отзыв. Определяет, в каком переходе применяется правило. |
+| `from_stage_key` | `varchar(100)` | нет | Область действия правила: `null` — все этапы шаблона (правило по умолчанию), значение — только этап с этим ключом. Так «любая доработка → входной контроль» остаётся одной строкой, а не N строками. |
+| `mode` | `varchar(20)` | да | Что разрешено: `FORCED` — ровно одна цель, сервер подставляет её сам; `CHOICE` — 1..N целей, клиент выбирает; `DENY` — возврата нет (только для `RECALL`). |
+| `when_condition` | `jsonb` | нет | Зарезервировано под условия (`when`) следующего этапа. В v1 обязано быть `null`; колонка существует, чтобы включение условий не требовало миграции таблицы. |
+| `priority` | `integer` | да, по умолчанию `0` | Порядок применения условных правил (меньше — раньше). В v1 не используется, так как на пару «шаблон × причина × откуда» допускается одно безусловное правило; нужен для v1.1. |
+| `created_at` | `timestamp` | да | Когда правило создано; аудит. |
+
+**Ограничения и почему они такие.**
+
+- `ck_return_rule_mode` — в `mode` только три известных значения; опечатка не пройдёт.
+- `ck_return_rule_deny_reason` — `DENY` допустим только для `RECALL`: при доработке отклонение
+  всегда ведёт в `OnRework`, и «запретить возврат» означало бы оставить процесс без выхода.
+- `ux_return_rule_unconditional` — одно безусловное правило на `(шаблон, причина, откуда)`.
+  `coalesce(from_stage_key, '')` нужен, потому что `null` (правило по умолчанию) тоже должен быть
+  уникальным; частичный индекс `where when_condition is null` оставляет место для нескольких
+  условных правил в v1.1.
+- `from_stage_key` — не FK: ключ этапа уникален только в паре с `template_id`, а поле nullable.
+  Принадлежность проверяет компилятор при публикации; так проще, чем составной FK с nullable-
+  колонкой.
+
+#### 2.4 `template_return_rule_target` — цели правила
+
+**Зачем.** У правила может быть несколько целей (`CHOICE`), одна (`FORCED`) или ни одной
+(`DENY`). Отдельная таблица позволяет хранить 1..N целей без массивов и дублей и проверять
+уникальность цели в правиле.
+
+```sql
 create table template_return_rule_target (
     id                uuid primary key,
     rule_id           uuid not null references template_return_rule(id) on delete cascade,
-    target_stage_key  varchar(100) not null,   -- конкретный этап шаблона
-    unique (rule_id, target_stage_key)
+    target_stage_key  varchar(100) not null
 );
 
+create unique index ux_return_target
+    on template_return_rule_target(rule_id, target_stage_key);
+```
+
+| Атрибут | Тип | Обяз. | Зачем / что означает |
+|---|---|---|---|
+| `id` | `uuid` | да, PK | Технический идентификатор строки; удобно для JPA и точечных правок. |
+| `rule_id` | `uuid` | да, FK → `template_return_rule(id)` | К какому правилу относится цель. При удалении правила цели удаляются каскадно. |
+| `target_stage_key` | `varchar(100)` | да | Конкретный этап, на который возвращаемся. Всегда ключ, а не `SELF`/`FIRST`: «на себя» — ключ самого этапа, «на первый» — ключ первого этапа. Принадлежность этапа тому же шаблону проверяет компилятор. |
+
+**Ограничения.** `ux_return_target (rule_id, target_stage_key)` — одна и та же цель не
+дублируется. Количество целей (`FORCED` = 1, `CHOICE` ≥ 1, `DENY` = 0) проверяется при
+публикации, а не CHECK-констрейнтом: оно зависит от `mode` родительского правила, а не от одной
+строки.
+
+#### 2.5 `process_instance.return_policy` — снимок политики
+
+**Зачем.** В рантайме процесс не должен читать шаблон: правила уже скомпилированы в конкретные
+`stageInstanceId` и зафиксированы на старте (ADR-003, Snapshot-on-Start). Один и тот же снимок
+читают guard, API и UI — поэтому они не расходятся, как это было с `allowedReturnStages`.
+
+```sql
 alter table process_instance add column return_policy jsonb not null default '[]';
 ```
+
+| Атрибут | Тип | Обяз. | Зачем / что означает |
+|---|---|---|---|
+| `return_policy` | `jsonb` | да, по умолчанию `[]` | Массив записей «этап × причина → режим + цели». Для старых процессов миграция заполняет его из `stage_instance.allowed_return_stages`; для новых — генератор маршрута. |
+
+Запись снимка:
+
+| Поле | Тип | Зачем / что означает |
+|---|---|---|
+| `reason` | `string` | Код причины (`REWORK`/`RECALL`); по нему резолвер выбирает запись. |
+| `fromStageId` | `uuid` | Этап, к которому применяется запись (конкретный `stage_instance`). Одна запись на пару «этап × причина». |
+| `mode` | `string` | Эффективный режим `FORCED`/`CHOICE`/`DENY` уже с учётом приоритета правил. |
+| `targetStageIds` | `uuid[]` | Конкретные этапы-цели; для `DENY` — пустой массив. Рантайму не нужно резолвить ключи. |
+| `ruleId` | `uuid` | Какое правило шаблона дало запись; для аудита и разбора инцидентов. Не используется для выбора цели. |
+
+**Почему JSONB, а не таблица.** Снимок читается целиком по `process_id`, не обновляется и не
+участвует в JOIN; его размер — число этапов × число причин, то есть десятки строк. Отдельная
+таблица дала бы FK-целостность, но добавила бы JOIN на каждый возврат и вторую точку правки
+снимка. Если появится запрос «покажи все процессы, которые могут вернуться на этап X», можно
+сделать проекцию/индекс отдельно, не меняя источник истины.
+
+#### 2.6 Удаляемые колонки
+
+| Колонка | Почему удаляется |
+|---|---|
+| `stage_template.allowed_return_stages` | Плоский список `orderIdx` не выражает «должен/может», не знает причин и ломается при вставке этапа. Заменяется правилами `template_return_rule`. |
+| `stage_instance.allowed_return_stages` | Дублировал политику в каждом этапе и расходился с guard/UI. Заменяется снимком `process_instance.return_policy`. |
+
+Порядок миграции: создать новые таблицы → заполнить правила из старых списков → собрать снимки
+для существующих процессов → удалить обе колонки. Откат — обратная миграция, но она не
+восстановит снимки, созданные после включения новой версии; это допустимо, так как колонки
+удаляются в том же релизе.
+
+#### 2.7 Сводка ограничений
+
+| Объект | Зачем |
+|---|---|
+| `ux_stage_template_key (template_id, key)` | Ключ уникален в шаблоне; правило не может сослаться на два разных этапа с одним ключом. |
+| `ux_return_rule_unconditional` | Одно безусловное правило на пару «шаблон × причина × откуда»; не даёт двум правилам противоречить друг другу. |
+| `ux_return_target (rule_id, target_stage_key)` | Одна цель не дублируется в правиле. |
+| `ck_return_rule_mode` | В `mode` только `FORCED`/`CHOICE`/`DENY`. |
+| `ck_return_rule_deny_reason` | `DENY` только для `RECALL`; для `REWORK` это оставило бы процесс без выхода. |
+| `ix_return_rule_template` | Выборка правил шаблона при публикации/копировании версии; частичный уникальный индекс для этого не всегда подходит (условные правила в v1.1). |
 
 Порядок цели не хранится: `target_stage_key` резолвится компилятором в конкретный этап шаблона.
 Селекторов `SELF`/`FIRST` нет: «на себя» — это ключ самого этапа, «на первый» — ключ первого
@@ -169,8 +333,40 @@ alter table process_instance add column return_policy jsonb not null default '[]
 > Правило не вешается на строку `stage_template`: иначе «все этапы → входной контроль» пришлось
 > бы дублировать N раз и добавлять строку при каждом новом этапе.
 
-`stage_template.allowed_return_stages` и `stage_instance.allowed_return_stages` удаляются в этой
-же миграции после backfill (см. §11).
+#### 2.8 Пример: правила → эффективная политика → снимок
+
+Шаблон `T` (версия 7), этапы: `input_control` (order 1), `legal_review` (2), `signing` (3).
+
+Правила в `template_return_rule` / `template_return_rule_target`:
+
+| Правило | `reason_code` | `from_stage_key` | `mode` | Цели |
+|---|---|---|---|---|
+| R1 | `REWORK` | `null` (все этапы) | `FORCED` | `input_control` |
+| R2 | `REWORK` | `signing` | `CHOICE` | `signing`, `input_control` |
+| R3 | `RECALL` | `null` (все этапы) | `FORCED` | `input_control` |
+
+Что скомпилируется:
+
+| Этап | `REWORK` | `RECALL` |
+|---|---|---|
+| `input_control` | R1: только `input_control` | R3: только `input_control` |
+| `legal_review` | R1: только `input_control` | R3: только `input_control` |
+| `signing` | R2: `signing` или `input_control` (выбор) | R3: только `input_control` |
+
+Для этапа `signing` в `process_instance.return_policy` попадут две записи:
+
+```json
+[
+  {"reason": "REWORK", "fromStageId": "<signing>", "mode": "CHOICE",
+   "targetStageIds": ["<signing>", "<input_control>"], "ruleId": "<uuid R2>"},
+  {"reason": "RECALL", "fromStageId": "<signing>", "mode": "FORCED",
+   "targetStageIds": ["<input_control>"], "ruleId": "<uuid R3>"}
+]
+```
+
+Так видно, зачем нужны все три уровня: `template_return_rule` — авторское правило, `target` —
+его цели, `return_policy` — уже разрешённый для конкретного процесса результат, с которым
+работает guard/API/UI.
 
 ### 3. Доменные сущности
 
